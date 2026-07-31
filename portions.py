@@ -11,6 +11,7 @@ import sqlite3
 from datetime import datetime
 
 import config
+import db
 
 _STOP = {"of", "with", "and", "a", "the", "plate", "bowl", "plates", "bowls",
          "some", "my", "two", "one", "three", "had", "ate", "eaten", "again",
@@ -19,9 +20,7 @@ _STOP = {"of", "with", "and", "a", "the", "plate", "bowl", "plates", "bowls",
 
 
 def _conn():
-    c = sqlite3.connect(config.DB_PATH)
-    c.row_factory = sqlite3.Row
-    return c
+    return db.connect()
 
 
 def init_portion_table():

@@ -7,12 +7,11 @@ import sqlite3
 from datetime import datetime, timedelta, date
 
 import config
+import db
 
 
 def _conn():
-    c = sqlite3.connect(config.DB_PATH)
-    c.row_factory = sqlite3.Row
-    return c
+    return db.connect()
 
 
 def init_db():

@@ -11,6 +11,7 @@ import sqlite3
 from datetime import datetime
 
 import config
+import db
 
 ACTIVITY = {
     "light": 1.375,     # 1-3 days/week
@@ -33,9 +34,7 @@ PROTEIN_PER_KG = {
 
 
 def _conn():
-    c = sqlite3.connect(config.DB_PATH)
-    c.row_factory = sqlite3.Row
-    return c
+    return db.connect()
 
 
 def init_goal_table():
