@@ -13,8 +13,16 @@ from google.genai import types
 import config
 import portions
 
-# One client for the whole app. Reads the key from config.
-client = genai.Client(api_key=config.GEMINI_API_KEY)
+# Lazy client — created on first use, not at import time. Keeps worker startup
+# light so it boots fast and stays under memory limits on small hosts.
+_client = None
+
+
+def _get_client():
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=config.GEMINI_API_KEY)
+    return _client
 
 # JSON response schema (dict form is accepted by google-genai).
 RESPONSE_SCHEMA = {
@@ -99,7 +107,7 @@ def _to_parts(payload, prompt):
 def _generate(payload, prompt):
     """One Gemini call returning parsed JSON dict."""
     contents = _to_parts(payload, prompt)
-    resp = client.models.generate_content(
+    resp = _get_client().models.generate_content(
         model=config.GEMINI_MODEL,
         contents=contents,
         config=types.GenerateContentConfig(
