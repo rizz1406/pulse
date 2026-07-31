@@ -1,23 +1,26 @@
 """
-Gemini parsing engine — SINGLE-CALL (classify + extract together) with
-schema-locked JSON. Handles food, workout, weight logging, and off-topic chat.
-Understands casual and Hinglish input. Uses half the API quota of the old
-two-step design.
+Gemini parsing engine — SINGLE-CALL (classify + extract) with schema-locked JSON.
+Handles food, workout, weight logging, and off-topic chat. Understands casual
+and Hinglish input.
+
+Uses the modern, lightweight `google-genai` SDK (lower memory than the old
+`google-generativeai`, which matters on small hosts).
 """
 
 import json
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import config
 import portions
 
-genai.configure(api_key=config.GEMINI_API_KEY)
+# One client for the whole app. Reads the key from config.
+client = genai.Client(api_key=config.GEMINI_API_KEY)
 
-# One schema covering every case. Only the fields relevant to `type` get filled.
-UNIFIED_SCHEMA = {
+# JSON response schema (dict form is accepted by google-genai).
+RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
         "type": {"type": "string", "enum": ["food", "workout", "weight", "chat"]},
-        # food
         "item_name": {"type": "string"},
         "calories": {"type": "integer"},
         "protein_g": {"type": "integer"},
@@ -29,28 +32,15 @@ UNIFIED_SCHEMA = {
         "needs_clarification": {"type": "boolean"},
         "clarify_question": {"type": "string"},
         "clarify_options": {"type": "array", "items": {"type": "string"}},
-        # workout
         "exercise_name": {"type": "string"},
         "weight_kg": {"type": "number"},
         "sets": {"type": "integer"},
         "reps": {"type": "integer"},
         "notes": {"type": "string"},
-        # chat
         "reply": {"type": "string"},
     },
     "required": ["type"],
 }
-
-
-def _model(schema):
-    return genai.GenerativeModel(
-        config.GEMINI_MODEL,
-        generation_config={"response_mime_type": "application/json",
-                           "response_schema": schema},
-    )
-
-
-model = _model(UNIFIED_SCHEMA)
 
 UNIFIED_PROMPT = (
     "You are the engine of a personal health tracker. Read the input (text, a "
@@ -93,6 +83,33 @@ UNIFIED_PROMPT = (
 )
 
 
+def _to_parts(payload, prompt):
+    """Convert our simple payload (strings + {mime_type,data} dicts) into
+    google-genai content parts, with the prompt first."""
+    parts = [prompt]
+    for p in payload:
+        if isinstance(p, str):
+            parts.append(p)
+        elif isinstance(p, dict) and "data" in p:
+            parts.append(types.Part.from_bytes(
+                data=p["data"], mime_type=p.get("mime_type", "application/octet-stream")))
+    return parts
+
+
+def _generate(payload, prompt):
+    """One Gemini call returning parsed JSON dict."""
+    contents = _to_parts(payload, prompt)
+    resp = client.models.generate_content(
+        model=config.GEMINI_MODEL,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=RESPONSE_SCHEMA,
+        ),
+    )
+    return json.loads(resp.text)
+
+
 def _int(v):
     try:
         return int(float(v))
@@ -112,22 +129,15 @@ def _shape_food(d, allow_clarify=True):
     p = _int(d.get("protein_g"))
     cb = _int(d.get("carbs_g"))
     ft = _int(d.get("fat_g"))
-    # Safety net: weaker models sometimes return 0 calories but real macros.
-    # Reconstruct calories from macros so the user never sees a wrong 0.
+    # Safety net: if the model returns 0 calories but real macros, reconstruct.
     macro_cal = p * 4 + cb * 4 + ft * 9
     if cal == 0 and macro_cal > 0:
         cal = macro_cal
-    # Or if calories exist but macros are all zero and calories are suspiciously
-    # low, leave as-is (can't reconstruct macros reliably).
     return {
         "type": "food",
         "item_name": d.get("item_name") or "Unknown meal",
-        "calories": cal,
-        "protein_g": p,
-        "carbs_g": cb,
-        "fat_g": ft,
-        "fiber_g": _int(d.get("fiber_g")),
-        "sugar_g": _int(d.get("sugar_g")),
+        "calories": cal, "protein_g": p, "carbs_g": cb, "fat_g": ft,
+        "fiber_g": _int(d.get("fiber_g")), "sugar_g": _int(d.get("sugar_g")),
         "confidence_notes": d.get("confidence_notes", ""),
         "needs_clarification": bool(d.get("needs_clarification")) and allow_clarify,
         "clarify_question": d.get("clarify_question", "") if allow_clarify else "",
@@ -143,7 +153,7 @@ def parse(payload):
     if hint:
         prompt = prompt + hint
 
-    d = json.loads(model.generate_content([prompt] + payload).text)
+    d = _generate(payload, prompt)
     kind = d.get("type", "chat")
 
     if kind == "food":
@@ -172,7 +182,7 @@ def parse_food(payload, clarify_round=0):
         prompt = (prompt + "\n\nThe user has already answered enough questions. "
                   "Set needs_clarification=false and give your best final estimate now.")
     prompt = prompt + "\n\n(Treat this input as FOOD.)"
-    d = json.loads(model.generate_content([prompt] + payload).text)
+    d = _generate(payload, prompt)
     return _shape_food(d, allow_clarify=(clarify_round < 2))
 
 
