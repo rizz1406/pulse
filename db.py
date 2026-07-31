@@ -8,14 +8,17 @@ same tiny cursor-like interface, so storage/goals/portions barely change.
 """
 
 import sqlite3
+import os
 import config
 
-TURSO_URL = __import__("os").getenv("TURSO_DATABASE_URL", "")
-TURSO_TOKEN = __import__("os").getenv("TURSO_AUTH_TOKEN", "")
+TURSO_URL = os.getenv("TURSO_DATABASE_URL", "")
+TURSO_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
 USE_TURSO = bool(TURSO_URL)
 
-if USE_TURSO:
-    import libsql  # official Turso SDK
+# NOTE: we do NOT import libsql at module load. Under gunicorn this module is
+# imported in the master process before forking; libsql's native (Rust/tokio)
+# threads don't survive a fork and deadlock. We import it lazily inside the
+# connection, which runs in the worker process after the fork.
 
 
 # ─────────────────────────────────────────────────────────────
@@ -57,6 +60,7 @@ class _Conn:
     """Context-managed connection that commits on exit, for both backends."""
     def __init__(self):
         if USE_TURSO:
+            import libsql  # lazy import — only in worker, after fork
             self._conn = libsql.connect(database=TURSO_URL, auth_token=TURSO_TOKEN)
         else:
             self._conn = sqlite3.connect(config.DB_PATH)
