@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: pulse-health
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: APP_PASSCODE
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DB_PATH
+        value: /data/health.db
+      - key: DAILY_CAL_TARGET
+        value: "2000"
+      - key: DAILY_PROTEIN_TARGET
+        value: "120"
