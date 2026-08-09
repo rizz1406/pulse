@@ -64,6 +64,10 @@ class _Conn:
             self._conn = libsql.connect(database=TURSO_URL, auth_token=TURSO_TOKEN)
         else:
             self._conn = sqlite3.connect(config.DB_PATH)
+            # WAL lets readers run while writers wait, and busy_timeout makes
+            # concurrent request threads retry instead of erroring out.
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=5000")
 
     def execute(self, sql, params=()):
         cur = self._conn.cursor()

@@ -5,6 +5,7 @@ __pycache__/
 
 # Data & secrets — NEVER commit these
 *.db
+*.db-*
 .env
 service_account.json
 

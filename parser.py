@@ -28,7 +28,7 @@ def _get_client():
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
-        "type": {"type": "string", "enum": ["food", "workout", "weight", "chat"]},
+        "type": {"type": "string", "enum": ["food", "workout", "weight", "water", "chat"]},
         "item_name": {"type": "string"},
         "calories": {"type": "integer"},
         "protein_g": {"type": "integer"},
@@ -44,6 +44,7 @@ RESPONSE_SCHEMA = {
         "weight_kg": {"type": "number"},
         "sets": {"type": "integer"},
         "reps": {"type": "integer"},
+        "ml": {"type": "integer"},
         "notes": {"type": "string"},
         "reply": {"type": "string"},
     },
@@ -58,6 +59,10 @@ UNIFIED_PROMPT = (
     '- "food": something eaten/drunk.\n'
     '- "workout": exercise/training done.\n'
     '- "weight": reporting body weight (e.g. "I weigh 76kg", "weight 76").\n'
+    '- "water": drinking water (e.g. "drank 2 glasses water", "2 litre paani", '
+    '"1 bottle water"). Fill ml (millilitres) — assume a glass ≈ 250ml, a bottle '
+    '≈ 500ml, and convert litres/half-litres accordingly. Never classify '
+    'juice/milk/soda as water — those are food.\n'
     '- "chat": anything else.\n\n'
     "IF food: estimate nutrition with standard data, accounting for Indian "
     "dishes/portions. Fill item_name (short English summary), calories, protein_g, "
@@ -104,17 +109,32 @@ def _to_parts(payload, prompt):
     return parts
 
 
+class ParseError(Exception):
+    """Friendly, user-facing AI failure (bad key, rate limit, network…)."""
+
+
 def _generate(payload, prompt):
     """One Gemini call returning parsed JSON dict."""
     contents = _to_parts(payload, prompt)
-    resp = _get_client().models.generate_content(
-        model=config.GEMINI_MODEL,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=RESPONSE_SCHEMA,
-        ),
-    )
+    try:
+        resp = _get_client().models.generate_content(
+            model=config.GEMINI_MODEL,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=RESPONSE_SCHEMA,
+            ),
+        )
+    except Exception as e:
+        msg = str(e).lower()
+        if "api key" in msg or "unauthorized" in msg or "permission" in msg:
+            raise ParseError(
+                "Couldn't talk to Gemini — the API key looks invalid. Check GEMINI_API_KEY.") from e
+        if "429" in msg or "rate" in msg or "quota" in msg:
+            raise ParseError("Gemini rate limit hit — wait a minute and try again.") from e
+        if "timeout" in msg or "connection" in msg or "network" in msg:
+            raise ParseError("Network hiccup talking to Gemini — try again.") from e
+        raise ParseError(f"Gemini error: {e}") from e
     return json.loads(resp.text)
 
 
@@ -175,6 +195,8 @@ def parse(payload):
     if kind == "weight":
         return {"type": "weight", "weight_kg": _float(d.get("weight_kg")),
                 "notes": d.get("notes", "")}
+    if kind == "water":
+        return {"type": "water", "ml": _int(d.get("ml")) or 250}
     return {"type": "chat", "reply": (d.get("reply") or "").strip() or
             "I'm your food & workout tracker — tell me what you ate or lifted. 🍽💪"}
 

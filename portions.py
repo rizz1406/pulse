@@ -74,19 +74,24 @@ def hint_for(text):
     Return a short prompt hint if we've learned this user's portion for the
     dish they're describing, else ''. Matches by significant-word overlap so
     "had chicken biryani again" still finds the learned "Chicken biryani".
+    A learned dish needs a strict majority of its key words present, so
+    "chicken curry" isn't matched by an unrelated "chicken" mention alone,
+    but "chicken biryani rice" still matches "Chicken biryani".
     """
     words = set(_sig_words(text))
     if not words:
         return ""
     with _conn() as c:
         rows = c.execute("SELECT * FROM portion_memory WHERE times_seen>=2").fetchall()
-    best, best_overlap = None, 0
+    best, best_score = None, (0, -1)
     for r in rows:
         kw = set(r["key"].split())
         overlap = len(words & kw)
-        # need to match most of the learned dish's words
-        if overlap and overlap >= len(kw) - 0 and overlap > best_overlap:
-            best, best_overlap = r, overlap
+        needed = (len(kw) + 1) // 2  # strict majority of the learned dish's words
+        if overlap >= needed:
+            score = (overlap, r["times_seen"])
+            if score > best_score:
+                best, best_score = r, score
     if not best:
         return ""
     return (f"\n\nLEARNED PORTION (this user's typical '{best['item_name']}' is about "

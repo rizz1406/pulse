@@ -17,6 +17,10 @@ import parser
 import goals
 import portions
 
+from datetime import datetime
+
+config.validate()  # fail fast if the key is missing (never ship a broken deploy)
+
 app = Flask(__name__, static_folder="static", static_url_path="")
 app.secret_key = config.SECRET_KEY
 
@@ -144,6 +148,8 @@ def confirm():
         storage.save_workout(d)
     elif t == "weight":
         storage.save_weight(d.get("weight_kg", 0), d.get("notes", ""))
+    elif t == "water":
+        storage.add_water(d.get("ml", 250))
     else:
         return jsonify({"error": "bad type"}), 400
     return jsonify({"ok": True, "streak": storage.current_streak()})
@@ -263,11 +269,52 @@ def today():
     return jsonify(data)
 
 
+@app.route("/api/water", methods=["POST"])
+@login_required
+def water():
+    d = request.get_json(force=True)
+    if d.get("undo"):
+        return jsonify({"ok": True, "water": storage.undo_water()})
+    try:
+        ml = max(0, min(int(d.get("ml", 250)), 5000))
+    except (TypeError, ValueError):
+        return jsonify({"error": "bad ml"}), 400
+    return jsonify({"ok": True, "water": storage.add_water(ml)})
+
+
+@app.route("/api/weekly")
+@login_required
+def weekly():
+    days = int(request.args.get("days", 7))
+    return jsonify(storage.weekly_summary(days))
+
+
+@app.route("/api/export")
+@login_required
+def export_data():
+    kind = request.args.get("kind", "food")
+    csv_text = storage.export_csv(kind)
+    if csv_text is None:
+        return jsonify({"error": "bad kind"}), 400
+    from flask import Response
+    fname = f"pulse-{kind}-{datetime.now().strftime('%Y-%m-%d')}.csv"
+    return Response(csv_text, mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={fname}"})
+
+
 @app.route("/api/analytics")
 @login_required
 def analytics():
     days = int(request.args.get("days", 30))
     return jsonify(storage.analytics(days))
+
+
+# ─────────────────────────────────────────────────────────────
+# ERRORS
+# ─────────────────────────────────────────────────────────────
+@app.errorhandler(500)
+def _server_error(e):
+    return jsonify({"error": "Something went wrong server-side. Try again."}), 500
 
 
 # ─────────────────────────────────────────────────────────────

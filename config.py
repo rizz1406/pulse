@@ -1,21 +1,30 @@
 """
-Configuration. For local testing, paste values below.
-On Render (hosting), set these as Environment Variables instead — never commit real keys.
+Configuration. For local testing, paste values in .env (never commit it).
+On Render (hosting), set these as Environment Variables instead.
+Values read from the environment always win over .env.
 """
 
 import os
+
+# Load .env if it exists (keeps the Gemini key out of your shell history).
+# python-dotenv is optional — if missing, we just rely on real env vars.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from zoneinfo import ZoneInfo
 
 # ── Required ─────────────────────────────────────────────────
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "PASTE_YOUR_GEMINI_KEY")
-# Gemini model — auto-tracks current free Flash. Fallbacks: gemini-2.5-flash-lite, gemini-3.5-flash
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+# Gemini model — auto-tracks current free Flash. Fallbacks: gemini-2.5-flash-lite, gemini-2.0-flash
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 # ── Simple passcode so only you can use the app ──────────────
-# Set a value you'll remember. Leave "" to disable the lock (not recommended when hosted).
-APP_PASSCODE = os.getenv("APP_PASSCODE", "rizz1406")
+# Set a value you'll remember in .env. Leave "" to disable the lock (not recommended when hosted).
+APP_PASSCODE = os.getenv("APP_PASSCODE", "")
 
-
-# Secret for signing the login session cookie. Set a long random string when hosting.
+# Secret for signing the login session cookie. Set a long random string in .env when hosting.
 SECRET_KEY = os.getenv("SECRET_KEY", "x7k2mq9vBn4pLw8sReT3yUicjHf6aZdQ0oM5")
 
 # ── Local settings ───────────────────────────────────────────
@@ -25,3 +34,18 @@ DB_PATH = os.getenv("DB_PATH", "health.db")
 # ── Daily targets (0 = hide ring/bar) ────────────────────────
 DAILY_CAL_TARGET = int(os.getenv("DAILY_CAL_TARGET", "2000"))
 DAILY_PROTEIN_TARGET = int(os.getenv("DAILY_PROTEIN_TARGET", "120"))
+# Hydration goal
+WATER_TARGET_ML = int(os.getenv("WATER_TARGET_ML", "2500"))
+
+_PLACEHOLDERS = {"", "PASTE_YOUR_GEMINI_KEY", "your-key", "none"}
+
+
+def validate():
+    """Fail fast at startup if the app can't actually work."""
+    if GEMINI_API_KEY.strip().lower() in _PLACEHOLDERS:
+        raise RuntimeError(
+            "GEMINI_API_KEY is not set. Put your key in .env "
+            "(e.g. GEMINI_API_KEY=your-key) and restart."
+        )
+    if not SECRET_KEY:
+        raise RuntimeError("SECRET_KEY must not be empty.")

@@ -3,6 +3,8 @@ Storage layer — SQLite source of truth. Powers all analytics.
 Tables: food, workout, weight.
 """
 
+import csv
+import io
 import sqlite3
 from datetime import datetime, timedelta, date
 
@@ -37,6 +39,11 @@ def init_db():
             CREATE TABLE IF NOT EXISTS weight (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT, day TEXT, weight_kg REAL, notes TEXT
+            )""")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS water (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT, day TEXT, ml INTEGER
             )""")
 
 
@@ -82,12 +89,43 @@ def save_weight(kg, notes=""):
 
 
 def delete_entry(kind, entry_id):
-    table = {"food": "food", "workout": "workout", "weight": "weight"}.get(kind)
+    table = {"food": "food", "workout": "workout", "weight": "weight",
+             "water": "water"}.get(kind)
     if not table:
         return False
     with _conn() as c:
         c.execute(f"DELETE FROM {table} WHERE id=?", (entry_id,))
     return True
+
+
+# ─────────────────────────────────────────────────────────────
+# WATER
+# ─────────────────────────────────────────────────────────────
+def add_water(ml=250):
+    """Log a sip of water. Returns today's total ml."""
+    now = _now()
+    with _conn() as c:
+        c.execute("INSERT INTO water (ts, day, ml) VALUES (?,?,?)",
+                  (now.strftime("%Y-%m-%d %H:%M:%S"),
+                   now.strftime("%Y-%m-%d"), int(ml)))
+    return today_water()
+
+
+def undo_water():
+    """Remove the most recent water entry (fat-finger recovery)."""
+    with _conn() as c:
+        r = c.execute("SELECT id FROM water ORDER BY id DESC LIMIT 1").fetchone()
+        if r:
+            c.execute("DELETE FROM water WHERE id=?", (r["id"],))
+    return today_water()
+
+
+def today_water():
+    day = _now().strftime("%Y-%m-%d")
+    with _conn() as c:
+        t = c.execute("SELECT COALESCE(SUM(ml),0) ml, COUNT(*) n FROM water WHERE day=?",
+                      (day,)).fetchone()
+    return {"ml": t["ml"], "count": t["n"]}
 
 
 def update_food(entry_id, fields):
@@ -189,6 +227,8 @@ def today_data():
         workouts = c.execute(
             "SELECT id, ts, exercise_name, weight_kg, sets, reps, notes "
             "FROM workout WHERE day=? ORDER BY id DESC", (day,)).fetchall()
+        waters = c.execute(
+            "SELECT id, ts, ml FROM water WHERE day=? ORDER BY id DESC", (day,)).fetchall()
     return {
         "totals": {
             "calories": totals["cal"], "protein": totals["p"], "carbs": totals["cb"],
@@ -197,6 +237,9 @@ def today_data():
         },
         "foods": [dict(r) for r in foods],
         "workouts": [dict(r) for r in workouts],
+        "waters": [dict(r) for r in waters],
+        "water_total": sum((r["ml"] for r in waters), 0),
+        "water_target": config.WATER_TARGET_ML,
         "streak": current_streak(),
         "cal_target": config.DAILY_CAL_TARGET,
         "protein_target": config.DAILY_PROTEIN_TARGET,
@@ -302,3 +345,73 @@ def get_food(entry_id):
     with _conn() as c:
         r = c.execute("SELECT * FROM food WHERE id=?", (entry_id,)).fetchone()
     return dict(r) if r else None
+
+
+# ─────────────────────────────────────────────────────────────
+# WEEKLY SUMMARY
+# ─────────────────────────────────────────────────────────────
+def weekly_summary(days_back=7):
+    """Roll-up of the last N days: intake, workouts, water, weight delta,
+    and the dishes eaten most often."""
+    today = _now().date()
+    start = (today - timedelta(days=days_back - 1)).isoformat()
+
+    with _conn() as c:
+        cal_rows = c.execute(
+            "SELECT day, SUM(calories) cal FROM food WHERE day>=? GROUP BY day", (start,)
+        ).fetchall()
+        wo_count = c.execute(
+            "SELECT COUNT(*) n FROM workout WHERE day>=?", (start,)).fetchone()["n"]
+        wtr = c.execute(
+            "SELECT COALESCE(SUM(ml),0) ml FROM water WHERE day>=?", (start,)
+        ).fetchone()["ml"]
+        wt_rows = c.execute(
+            "SELECT day, AVG(weight_kg) w FROM weight WHERE day>=? GROUP BY day "
+            "ORDER BY day", (start,)).fetchall()
+        top = c.execute(
+            "SELECT item_name, COUNT(*) count, MAX(calories) calories FROM food "
+            "WHERE day>=? GROUP BY LOWER(item_name) ORDER BY count DESC, MAX(id) DESC "
+            "LIMIT 3", (start,)).fetchall()
+
+    logged = [r["cal"] for r in cal_rows if r["cal"]]
+    weight_change = None
+    if len(wt_rows) >= 2:
+        weight_change = round(wt_rows[-1]["w"] - wt_rows[0]["w"], 1)
+
+    return {
+        "days": days_back,
+        "avg_cal": round(sum(logged) / len(logged)) if logged else 0,
+        "total_cal": sum(logged),
+        "active_days": len(cal_rows),
+        "workouts": wo_count,
+        "water_ml": wtr,
+        "weight_change": weight_change,
+        "top_meals": [dict(r) for r in top],
+        "streak": current_streak(),
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# EXPORT
+# ─────────────────────────────────────────────────────────────
+def export_csv(kind):
+    """CSV text for one table: 'food' | 'workout' | 'weight' | 'water'."""
+    columns = {
+        "food": ["id", "ts", "day", "item_name", "calories", "protein_g",
+                 "carbs_g", "fat_g", "fiber_g", "sugar_g", "notes", "raw_input"],
+        "workout": ["id", "ts", "day", "exercise_name", "weight_kg",
+                    "sets", "reps", "notes", "raw_input"],
+        "weight": ["id", "ts", "day", "weight_kg", "notes"],
+        "water": ["id", "ts", "day", "ml"],
+    }
+    if kind not in columns:
+        return None
+    with _conn() as c:
+        rows = c.execute(
+            f"SELECT {','.join(columns[kind])} FROM {kind} ORDER BY id").fetchall()
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(columns[kind])
+    for r in rows:
+        w.writerow([r[col] for col in columns[kind]])
+    return out.getvalue()
