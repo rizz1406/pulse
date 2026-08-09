@@ -37,6 +37,20 @@ DAILY_PROTEIN_TARGET = int(os.getenv("DAILY_PROTEIN_TARGET", "120"))
 # Hydration goal
 WATER_TARGET_ML = int(os.getenv("WATER_TARGET_ML", "2500"))
 
+# ── Local AI (Ollama) — free & unlimited, used for plain text ──
+# Runs a small model on your own machine: no API key, no quotas,
+# unlimited logs. Gemini stays as the automatic fallback for
+# photos/voice or whenever the local model is unavailable.
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b")
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "90"))
+# Set OLLAMA_PRIMARY=0 to always use Gemini for text too.
+OLLAMA_PRIMARY = os.getenv("OLLAMA_PRIMARY", "1") != "0"
+
+# ── FatSecret (free 5,000/day, food search backup) ──
+FATSECRET_CLIENT_ID = os.getenv("FATSECRET_CLIENT_ID", "")
+FATSECRET_CLIENT_SECRET = os.getenv("FATSECRET_CLIENT_SECRET", "")
+
 _PLACEHOLDERS = {"", "PASTE_YOUR_GEMINI_KEY", "your-key", "none"}
 
 

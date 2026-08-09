@@ -1,10 +1,14 @@
 """
-Gemini parsing engine — SINGLE-CALL (classify + extract) with schema-locked JSON.
-Handles food, workout, weight logging, and off-topic chat. Understands casual
-and Hinglish input.
+Parsing engine — multi-tier classification + extraction.
+Handles food, workout, weight logging, water, and off-topic chat.
+Understands casual and Hinglish input.
 
-Uses the modern, lightweight `google-genai` SDK (lower memory than the old
-`google-generativeai`, which matters on small hosts).
+Three-tier food parsing:
+  1. Local food database (unlimited, instant, ~150 common foods)
+  2. FatSecret search API (free 5,000/day)
+  3. Gemini AI (quota-limited, best quality, handles photos/voice)
+
+Photos and voice always go to Gemini (local DB can't see/hear).
 """
 
 import json
@@ -12,6 +16,7 @@ from google import genai
 from google.genai import types
 import config
 import portions
+import fooddb
 
 # Lazy client — created on first use, not at import time. Keeps worker startup
 # light so it boots fast and stays under memory limits on small hosts.
@@ -180,6 +185,13 @@ def parse(payload):
     hint = portions.hint_for(text_bits)
     if hint:
         prompt = prompt + hint
+
+    # Fast path: try local food DB for plain text (no API call needed)
+    text_only = all(isinstance(p, str) for p in payload)
+    if text_only and text_bits.strip():
+        local_food = fooddb.parse_food(text_bits, payload)
+        if local_food:
+            return local_food
 
     d = _generate(payload, prompt)
     kind = d.get("type", "chat")

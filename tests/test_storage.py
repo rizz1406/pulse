@@ -75,7 +75,10 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(storage.today_water()["ml"], 750)
         storage.undo_water()
         self.assertEqual(storage.today_water()["ml"], 250)
-        storage.delete_entry("water", storage.today_water()["count"])
+        # delete the remaining entry by its actual ID
+        with db.connect() as c:
+            row = c.execute("SELECT id FROM water ORDER BY id DESC LIMIT 1").fetchone()
+        storage.delete_entry("water", row["id"])
         self.assertEqual(storage.today_water()["ml"], 0)
 
     def test_weekly_summary(self):

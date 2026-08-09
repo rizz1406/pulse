@@ -37,10 +37,11 @@ class TestParser(unittest.TestCase):
             "needs_clarification": True, "clarify_question": "How oily?",
             "clarify_options": ["Light", "Medium", "Rich"],
         })
-        d = parser.parse(["User input: biryani"])
-        self.assertEqual(d["type"], "food")
-        self.assertTrue(d["needs_clarification"])
-        self.assertEqual(len(d["clarify_options"]), 3)
+        with mock.patch.object(parser.fooddb, "parse_food", return_value=None):
+            d = parser.parse(["User input: biryani"])
+            self.assertEqual(d["type"], "food")
+            self.assertTrue(d["needs_clarification"])
+            self.assertEqual(len(d["clarify_options"]), 3)
 
     def test_parse_workout(self):
         self._fake_generate({"type": "workout", "exercise_name": "Bench Press",

@@ -88,7 +88,7 @@
   <!-- PROGRESS -->
   <div class="section" id="tab-progress">
     <div class="prog-hero card" id="progHero"></div>
-    <div class="card"><h3>Weight <span class="hint">toward goal</span></h3><canvas id="weightTrend" height="160"></canvas></div>
+    <div class="card"><h3>Weight <span class="hint">toward goal</span></h3><div class="chart-wrap"><canvas id="weightTrend"></canvas></div></div>
     <div class="card"><h3>Pace <span class="hint">is the cut on track?</span></h3><div id="paceBox"></div></div>
   </div>
 
@@ -105,11 +105,11 @@
       <div class="stat"><div class="num" id="aStreak">0</div><div class="lbl">streak</div></div>
     </div>
     <div class="card"><h3>This week <span class="hint">last 7 days</span></h3><div id="weeklyBox"></div></div>
-    <div class="card"><h3>Calories <span class="hint">daily</span></h3><canvas id="calChart" height="150"></canvas></div>
-    <div class="card"><h3>Macros <span class="hint">protein · carbs · fat</span></h3><canvas id="macroChart" height="150"></canvas></div>
-    <div class="card"><h3>Macro split <span class="hint">period total</span></h3><canvas id="donutChart" height="150"></canvas></div>
-    <div class="card"><h3>Workout volume <span class="hint">kg × sets × reps</span></h3><canvas id="volChart" height="150"></canvas></div>
-    <div class="card"><h3>Body weight <span class="hint">kg</span></h3><canvas id="weightChart" height="150"></canvas></div>
+    <div class="card"><h3>Calories <span class="hint">daily</span></h3><div class="chart-wrap"><canvas id="calChart"></canvas></div></div>
+    <div class="card"><h3>Macros <span class="hint">protein · carbs · fat</span></h3><div class="chart-wrap"><canvas id="macroChart"></canvas></div></div>
+    <div class="card"><h3>Macro split <span class="hint">period total</span></h3><div class="chart-wrap"><canvas id="donutChart"></canvas></div></div>
+    <div class="card"><h3>Workout volume <span class="hint">kg × sets × reps</span></h3><div class="chart-wrap"><canvas id="volChart"></canvas></div></div>
+    <div class="card"><h3>Body weight <span class="hint">kg</span></h3><div class="chart-wrap"><canvas id="weightChart"></canvas></div></div>
     <div class="card"><h3>Export your data <span class="hint">CSV</span></h3>
       <div class="export-row">
         <button onclick="exportCSV('food')">🍽 Meals</button>

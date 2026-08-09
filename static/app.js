@@ -1,4 +1,4 @@
-let pending=null, mediaRecorder=null, chunks=[], charts={};
+let pending=null, charts={};
 
 /* ---------- AUTH ---------- */
 async function checkAuth(){
@@ -115,24 +115,27 @@ async function onPhoto(input){
   await sendPayload({form});
 }
 
-/* ---------- VOICE ---------- */
+/* ---------- VOICE (Web Speech API — free, no server needed) ---------- */
+let _recognition = null;
 async function toggleMic(){
   const mic=document.getElementById('micBtn');
-  if(mediaRecorder&&mediaRecorder.state==='recording'){ mediaRecorder.stop(); return; }
-  try{
-    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
-    mediaRecorder=new MediaRecorder(stream); chunks=[];
-    mediaRecorder.ondataavailable=e=>chunks.push(e.data);
-    mediaRecorder.onstop=async()=>{
-      mic.classList.remove('rec'); mic.textContent='🎙';
-      stream.getTracks().forEach(t=>t.stop());
-      const blob=new Blob(chunks,{type:'audio/ogg'});
-      const form=new FormData(); form.append('media',blob,'voice.ogg');
-      document.getElementById('sendBtn').innerHTML='<div class="spinner"></div>';
-      await sendPayload({form});
-    };
-    mediaRecorder.start(); mic.classList.add('rec'); mic.textContent='⏹';
-  }catch(e){ toast('Mic permission needed'); }
+  if(_recognition){ _recognition.stop(); _recognition=null; return; }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR){ toast('Speech recognition not supported in this browser'); return; }
+  _recognition = new SR();
+  _recognition.continuous = false;
+  _recognition.interimResults = false;
+  _recognition.lang = 'en-IN'; // English + Hindi auto-detect
+  mic.classList.add('rec'); mic.textContent='⏹';
+  _recognition.onresult = async (event) => {
+    const text = event.results[0][0].transcript;
+    _recognition = null; mic.classList.remove('rec'); mic.textContent='🎙';
+    ta.value = text; await sendText();
+  };
+  _recognition.onend = () => { _recognition=null; mic.classList.remove('rec'); mic.textContent='🎙'; };
+  _recognition.onerror = (e) => { _recognition=null; mic.classList.remove('rec'); mic.textContent='🎙';
+    if(e.error!=='aborted') toast('Voice error: '+e.error); };
+  try{ _recognition.start(); }catch(e){ toast('Could not start voice'); _recognition=null; mic.classList.remove('rec'); mic.textContent='🎙'; }
 }
 
 /* ---------- RESULT / PREVIEW ---------- */

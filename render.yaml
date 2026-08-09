@@ -11,7 +11,7 @@ services:
       - key: APP_PASSCODE
         sync: false
       - key: GEMINI_MODEL
-        value: gemini-2.0-flash
+        value: gemini-3.5-flash
       - key: TURSO_DATABASE_URL
         sync: false
       - key: TURSO_AUTH_TOKEN
@@ -22,3 +22,9 @@ services:
         value: "2000"
       - key: DAILY_PROTEIN_TARGET
         value: "120"
+      - key: WATER_TARGET_ML
+        value: "2500"
+      - key: FATSECRET_CLIENT_ID
+        sync: false
+      - key: FATSECRET_CLIENT_SECRET
+        sync: false
