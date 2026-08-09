@@ -42,6 +42,19 @@ class TestFoodDB(unittest.TestCase):
         d = fooddb.parse_food("some random food xyz")
         self.assertIsNone(d)
 
+    def test_parse_multi_local(self):
+        d = fooddb.parse_multi_local("2 chapati, Lady finger curry, 2 boiled eggs")
+        self.assertIsNotNone(d)
+        self.assertGreater(d["calories"], 500)
+        self.assertIn("Chapati", d["item_name"])
+        self.assertIn("Lady Finger", d["item_name"])
+        self.assertIn("2 Boiled Eggs", d["item_name"])
+
+    def test_parse_multi_local_with_and(self):
+        d = fooddb.parse_multi_local("2 roti and paneer")
+        self.assertIsNotNone(d)
+        self.assertEqual(d["calories"], 445)  # 180 + 265
+
 
 if __name__ == "__main__":
     unittest.main()

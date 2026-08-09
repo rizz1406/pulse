@@ -68,10 +68,26 @@ FOODS = {
     "palak": {"cal": 23, "p": 3, "c": 4, "f": 0},
     "spinach": {"cal": 23, "p": 3, "c": 4, "f": 0},
     "bhindi": {"cal": 33, "p": 2, "c": 7, "f": 0},
+    "bhindi curry": {"cal": 80, "p": 2, "c": 8, "f": 4},
     "okra": {"cal": 33, "p": 2, "c": 7, "f": 0},
+    "okra curry": {"cal": 80, "p": 2, "c": 8, "f": 4},
+    "lady finger": {"cal": 33, "p": 2, "c": 7, "f": 0},
+    "lady finger curry": {"cal": 80, "p": 2, "c": 8, "f": 4},
     "cauliflower": {"cal": 25, "p": 2, "c": 5, "f": 0},
+    "gobi": {"cal": 25, "p": 2, "c": 5, "f": 0},
+    "gobi curry": {"cal": 70, "p": 2, "c": 8, "f": 4},
     "cabbage": {"cal": 25, "p": 1, "c": 6, "f": 0},
     "broccoli": {"cal": 34, "p": 3, "c": 7, "f": 0},
+    "beans": {"cal": 31, "p": 2, "c": 7, "f": 0},
+    "beans curry": {"cal": 70, "p": 2, "c": 8, "f": 4},
+    "carrot": {"cal": 41, "p": 1, "c": 10, "f": 0},
+    "tomato": {"cal": 18, "p": 1, "c": 4, "f": 0},
+    "onion": {"cal": 40, "p": 1, "c": 9, "f": 0},
+    "capsicum": {"cal": 20, "p": 1, "c": 4, "f": 0},
+    "mushroom": {"cal": 22, "p": 3, "c": 3, "f": 0},
+    "brinjal": {"cal": 25, "p": 1, "c": 6, "f": 0},
+    "brinjal curry": {"cal": 70, "p": 2, "c": 8, "f": 4},
+    "eggplant": {"cal": 25, "p": 1, "c": 6, "f": 0},
 
     # ── Fruits ──
     "banana": {"cal": 89, "p": 1, "c": 23, "f": 0},
@@ -369,10 +385,10 @@ def parse_food(text, payload=None):
     3. Gemini AI (quota-limited, best quality)
     Returns dict or None.
     """
-    # Tier 1: Local database
-    local = parse_local(text)
-    if local and local["calories"] > 0:
-        return local
+    # Tier 1: Local database — try multi-item first, then single
+    multi = parse_multi_local(text)
+    if multi and multi["calories"] > 0:
+        return multi
 
     # Tier 2: FatSecret
     fs = parse_fatsecret(text)
@@ -381,3 +397,60 @@ def parse_food(text, payload=None):
 
     # Tier 3: Gemini (handled by caller)
     return None
+
+
+def parse_multi_local(text):
+    """Parse multiple food items from text, combining all matches.
+    Splits by commas, semicolons, 'and', '+' etc.
+    Returns combined dict or None."""
+    if not text or not text.strip():
+        return None
+
+    # Split by common separators (commas, semicolons, 'and', 'with', '+')
+    parts = re.split(r'[,;+]|\band\b|\bwith\b', text)
+    parts = [p.strip() for p in parts if p.strip()]
+
+    # If no separators found, try the whole text as one item
+    if len(parts) <= 1:
+        return parse_local(text)
+
+    # Parse each part and combine
+    items = []
+    total_cal = total_p = total_c = total_f = total_fb = total_sg = 0
+    matched_names = []
+
+    for part in parts:
+        d = parse_local(part)
+        if d and d["calories"] > 0:
+            items.append(d)
+            total_cal += d["calories"]
+            total_p += d["protein_g"]
+            total_c += d["carbs_g"]
+            total_f += d["fat_g"]
+            total_fb += d.get("fiber_g", 0)
+            total_sg += d.get("sugar_g", 0)
+            matched_names.append(d["item_name"])
+
+    if not items:
+        return None
+
+    # Build combined item name
+    if len(matched_names) == 1:
+        item_name = matched_names[0]
+    else:
+        item_name = " + ".join(matched_names)
+
+    return {
+        "type": "food",
+        "item_name": item_name,
+        "calories": total_cal,
+        "protein_g": total_p,
+        "carbs_g": total_c,
+        "fat_g": total_f,
+        "fiber_g": total_fb,
+        "sugar_g": total_sg,
+        "confidence_notes": f"local DB: {len(items)} items matched",
+        "needs_clarification": False,
+        "clarify_question": "",
+        "clarify_options": [],
+    }

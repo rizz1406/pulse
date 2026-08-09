@@ -455,7 +455,12 @@ async function loadWeekly(){
 }
 const gridColor='rgba(255,255,255,.05)', tickColor='#8fa38f';
 function baseOpts(){return{responsive:true,maintainAspectRatio:false,
-  plugins:{legend:{display:false}},
+  interaction:{mode:'index',intersect:false},
+  plugins:{legend:{display:false},
+    tooltip:{enabled:true,backgroundColor:'rgba(22,30,22,0.95)',titleColor:'#c4ff4d',
+      bodyColor:'#eef5ee',borderColor:'rgba(255,255,255,0.1)',borderWidth:1,
+      padding:10,cornerRadius:12,displayColors:true,boxPadding:4,
+      titleFont:{family:'Space Grotesk',weight:600},bodyFont:{family:'Inter'}}},
   scales:{x:{grid:{color:gridColor},ticks:{color:tickColor,maxTicksLimit:6,font:{size:10}}},
           y:{grid:{color:gridColor},ticks:{color:tickColor,font:{size:10}},beginAtZero:true}}};}
 function drawLine(id,labels,series){
