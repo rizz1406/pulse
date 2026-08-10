@@ -18,6 +18,8 @@ from zoneinfo import ZoneInfo
 
 # ── Required ─────────────────────────────────────────────────
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+# Groq Whisper transcription model (free tier; used for voice notes).
+GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
 # ── Vision (photos) — Gemini free tier. Groq has no vision model. ──
 # Get a free key at https://aistudio.google.com/apikey
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")

@@ -13,8 +13,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -187,6 +185,10 @@
     <div class="ph">Scan a barcode</div>
     <div id="barcodeReader" style="width:100%;border-radius:12px;overflow:hidden"></div>
     <div id="barcodeResult" style="margin-top:12px"></div>
+    <div class="barcode-manual">
+      <input id="barcodeManual" type="text" inputmode="numeric" placeholder="Or type the barcode number…">
+      <button onclick="manualBarcodeLookup()">Search</button>
+    </div>
     <div class="sheet-actions">
       <button class="btn-cancel" onclick="stopBarcode()">Close</button>
     </div>

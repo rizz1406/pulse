@@ -140,6 +140,25 @@ def log():
     return jsonify(result)
 
 
+@app.route("/api/transcribe", methods=["POST"])
+@login_required
+def transcribe():
+    """Transcribe a recorded voice note via Groq Whisper, return the text."""
+    file = request.files.get("audio")
+    if not file:
+        return jsonify({"error": "no audio"}), 400
+    blob = file.read()
+    try:
+        text = parser.transcribe_audio(blob, file.mimetype or "audio/webm")
+    except parser.ParseError as e:
+        return jsonify({"error": str(e)}), 422
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    if not text:
+        return jsonify({"error": "Couldn't hear anything — try again"}), 422
+    return jsonify({"text": text})
+
+
 @app.route("/api/pill", methods=["POST"])
 @login_required
 def pill():

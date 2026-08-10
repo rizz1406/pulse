@@ -3,15 +3,16 @@ Parsing engine — multi-tier classification + extraction.
 Handles food, workout, weight logging, water, and off-topic chat.
 Understands casual and Hinglish input.
 
-Three-tier food parsing:
-  1. Local food database (unlimited, instant, ~150 common foods)
-  2. FatSecret search API (free 5,000/day)
-  3. Groq AI (quota-limited — ONLY for ambiguous input parsing, NOT nutrition)
+Hybrid food parsing:
+  1. Local food database — exact nutrition for ~150 common foods, instant & free
+  2. Groq AI — estimates macros for anything the DB doesn't know
+     (e.g. "2 banana and 2 omelette" when parts aren't in the DB). The
+     estimate is shown to the user for confirmation before logging.
+  3. Photos go to Gemini vision (Groq has no vision model); voice goes to
+     Groq Whisper for transcription.
 
-Photos and voice always go to Groq (local DB can't see/hear).
-Groq must NEVER invent nutrition values — it classifies input and extracts
-structure (quantity, food name, units). Actual nutrition comes from local DB
-or FatSecret only.
+The local DB is authoritative when it matches — the AI never re-maps known
+foods. Unknown foods get an AI estimate, not a dead-end or a wrong DB match.
 """
 
 import base64
@@ -52,10 +53,10 @@ def _get_client():
     return _client
 
 # ─────────────────────────────────────────────────────────────
-# Groq prompt — CRITICAL: Groq must NOT invent nutrition.
-# It only classifies input and extracts structure (food name,
-# quantity, units). Actual nutrition is always looked up from
-# the local DB or FatSecret.
+# Groq prompt — classifies input and gives nutrition ESTIMATES for
+# foods that aren't in the local DB. The local DB always overrides
+# (it's authoritative). Estimates are shown to the user for confirmation,
+# so the AI is a suggestion followed by an explicit "Log it" tap.
 # ─────────────────────────────────────────────────────────────
 UNIFIED_PROMPT = (
     "You are the engine of a personal health tracker. Read the input (text, a "
@@ -69,20 +70,25 @@ UNIFIED_PROMPT = (
     'Fill ml (millilitres) — assume a glass ≈ 250ml, a bottle ≈ 500ml. '
     'Never classify juice/milk/soda as water.\n'
     '- "chat": anything else.\n\n'
-    "IF food: Your job is ONLY to identify the food and quantity. Do NOT "
-    "estimate calories or macros — the system looks those up from a database. "
-    "Fill:\n"
-    "- item_name: short English name of the food (e.g. 'boiled eggs', 'chapati', "
+    "IF food: Identify the food(s) and quantity, then give your best nutrition "
+    "estimate for the EXACT amount described. The system overrides with a "
+    "verified database whenever the food is known and only shows your estimate "
+    "for confirmation otherwise. Fill:\n"
+    "- item_name: short English name of the food(s) (e.g. '2 boiled eggs + 2 chapatis', "
     "'chicken biryani')\n"
-    "- calories: set to 0 (the system will fill this from the database)\n"
-    "- protein_g, carbs_g, fat_g: set to 0 (the system will fill these)\n"
-    "- confidence_notes: what portion/prep you identified (e.g. '2 large eggs, "
-    "boiled' or '2 chapatis, home-style')\n"
-    "- needs_clarification: true ONLY if the food is genuinely ambiguous with "
-    "high calorie variance AND the user gave no portion info (e.g. just 'curry' "
-    "or 'biryani' with no amount). Then put ONE short clarify_question and "
-    "2-4 clarify_options.\n"
-    "- For everyday or clearly-described foods, needs_clarification=false.\n\n"
+    "- quantity: number of servings/items described (default 1)\n"
+    "- unit: serving unit you assumed (e.g. 'egg', 'plate', 'bowl', 'cup', 'g')\n"
+    "- calories, protein_g, carbs_g, fat_g: your best estimate for the exact quantity "
+    "described, using standard portions (1 boiled egg ≈ 72 kcal / 6p / 0c / 5f, "
+    "1 fried egg ≈ 91 / 6 / 1 / 7, 1 banana ≈ 89 kcal, 1 chapati ≈ 170 kcal, "
+    "100g chicken breast ≈ 165 kcal / 31p).\n"
+    "- serving_note: one line describing the portion you assumed "
+    "(e.g. '2 large eggs, boiled, no oil')\n"
+    "- confidence_notes: what portion/prep you identified\n"
+    "- needs_clarification: FALSE for anything you can reasonably estimate. TRUE "
+    "ONLY for foods with enormous calorie variance where the user gave no amount "
+    "(e.g. bare 'chai', 'biryani', 'curry') — then put ONE short clarify_question "
+    "and 2-4 clarify_options.\n"
     "IF workout: fill exercise_name (standardized English), weight_kg (0 = "
     "bodyweight), sets, reps (estimate if only one given), notes.\n\n"
     "IF weight: fill weight_kg (number, convert from lbs if needed) and notes.\n\n"
@@ -294,15 +300,20 @@ def _float(v):
         return 0.0
 
 
-def _shape_food(d, allow_clarify=True, audit=None, pills=None, default_fallback=""):
+def _has_macros(d):
+    """True when the AI provided a usable nutrition estimate."""
+    return any(_int(d.get(k)) > 0 for k in ("calories", "protein_g", "carbs_g", "fat_g"))
+
+
+def _shape_food(d, allow_clarify=True, audit=None, pills=None, default_fallback="",
+                source=None):
     """Shape a food result dict. If audit is provided, use it for nutrition
-    (Groq's values are ignored — the database is the source of truth)."""
+    (the database is the source of truth). Otherwise use the AI's estimate."""
     if audit:
         # Use the database lookup result as the source of truth
         return audit
 
-    # Fallback: if we somehow got here without a database lookup,
-    # use Groq's values but log a warning
+    # Fallback: the AI's estimated macros (shown to the user for confirmation)
     cal = _int(d.get("calories"))
     p = _int(d.get("protein_g"))
     cb = _int(d.get("carbs_g"))
@@ -317,14 +328,14 @@ def _shape_food(d, allow_clarify=True, audit=None, pills=None, default_fallback=
         "item_name": d.get("item_name") or "Unknown meal",
         "calories": cal, "protein_g": p, "carbs_g": cb, "fat_g": ft,
         "fiber_g": _int(d.get("fiber_g")), "sugar_g": _int(d.get("sugar_g")),
-        "confidence_notes": d.get("confidence_notes", ""),
+        "confidence_notes": d.get("confidence_notes") or d.get("serving_note", ""),
         "needs_clarification": bool(d.get("needs_clarification")) and allow_clarify,
         "clarify_question": d.get("clarify_question", "") if allow_clarify else "",
         "clarify_options": d.get("clarify_options", []) if allow_clarify else [],
-        "source": "groq_fallback",
+        "source": source or "groq_fallback",
         "matched_food": d.get("item_name", ""),
-        "serving_g": 0,
-        "qty": 1,
+        "serving_g": _int(d.get("serving_g")) or 0,
+        "qty": _int(d.get("quantity")) or 1,
     }
     # New pills-based clarification
     if pills and allow_clarify:
@@ -337,9 +348,11 @@ def _shape_food(d, allow_clarify=True, audit=None, pills=None, default_fallback=
 def parse(payload):
     """Single call: classify + extract. Returns a normalized dict.
 
-    For food: tries local DB / FatSecret first (zero API cost).
-    Only calls the AI for non-food or when local lookup fails.
-    Photos go to Gemini vision (Groq has no vision model).
+    Hybrid strategy:
+      1. Local DB fast path (zero API cost, exact values) for known food.
+      2. Otherwise AI classifies AND estimates macros — shown to the user
+         for confirmation (no dead-ends, no FatSecret re-mapping).
+      Photos go to Gemini vision; voice is transcribed by Whisper.
     """
     text_bits = " ".join(p for p in payload if isinstance(p, str))
     hint = portions.hint_for(text_bits)
@@ -349,14 +362,16 @@ def parse(payload):
 
     has_image = any(isinstance(p, dict) and "data" in p for p in payload)
 
-    # Fast path: try local food DB for plain text (no API call needed)
+    # Fast path: try local food DB for plain text (no API call needed).
+    # parse_local only (not parse_food) — FatSecret is not auto-hit, so
+    # unknown foods flow straight to the AI estimate instead of a wrong match.
     text_only = all(isinstance(p, str) for p in payload)
     if text_only and text_bits.strip():
-        local_food = fooddb.parse_food(text_bits, payload)
+        local_food = fooddb.parse_local(text_bits)
         if local_food:
             return local_food
 
-    # AI path: classify input, extract structure
+    # AI path: classify input, extract structure + estimated macros
     d = _generate(payload, prompt)
     kind = d.get("type", "food" if has_image else None) or d.get("type", "chat")
 
@@ -370,20 +385,15 @@ def parse(payload):
         return {"type": "chat", "reply": msg + " Or just type what you ate / did."}
 
     if kind == "food":
-        # Groq identified the food but didn't give nutrition (we told it not to).
-        # Try to look it up in the database using the identified name.
+        # Hybrid: local DB is authoritative for known foods; the AI provides
+        # estimated macros for anything else (confirmed before logging).
         food_name = d.get("item_name", "")
         audit = fooddb.parse_food(food_name) if food_name else None
+        estimated = _has_macros(d)
 
-        # If Groq gave specific portion info in confidence_notes, try to
-        # reconstruct a more specific query
-        if not audit and food_name:
-            # Try the original text with the Groq-identified name
-            audit = fooddb.parse_food(text_bits)
-
-        # Photos: Gemini identified the food. Use local DB nutrition when the
-        # name matches; otherwise show pills for user confirmation.
-        if has_image and food_name:
+        # Photos: Gemini identifies the food. Use DB nutrition when the name
+        # matches; otherwise show pills so the user picks the preparation.
+        if has_image:
             if audit:
                 return _shape_food(d, allow_clarify=True, audit=audit)
             amb = _check_ambiguity(food_name, text_bits or f"[photo: {food_name}]")
@@ -394,15 +404,24 @@ def parse(payload):
             return _shape_food(d, allow_clarify=True, audit=None,
                                default_fallback=food_name)
 
-        # If no local match, check ambiguity for clarification pills
-        if not audit and food_name:
-            amb = _check_ambiguity(food_name, text_bits)
-            if amb.get("requires_clarification") and amb.get("pills"):
-                return _shape_food(d, allow_clarify=True, audit=None,
-                                   pills=amb["pills"],
-                                   default_fallback=amb.get("default_fallback", ""))
+        # Known food → exact DB values (no AI re-mapping, no pills).
+        if audit:
+            return _shape_food(d, allow_clarify=True, audit=audit)
 
-        return _shape_food(d, allow_clarify=True, audit=audit)
+        # AI estimated macros → show them directly for confirmation.
+        if estimated:
+            return _shape_food(d, allow_clarify=True, audit=None,
+                               source="ai_estimate")
+
+        # No usable estimate & AI flagged ambiguity → clarification pills.
+        amb = _check_ambiguity(food_name, text_bits)
+        if amb.get("requires_clarification") and amb.get("pills"):
+            return _shape_food(d, allow_clarify=True, audit=None,
+                               pills=amb["pills"],
+                               default_fallback=amb.get("default_fallback", ""))
+
+        return _shape_food(d, allow_clarify=True, audit=None,
+                           source="groq_fallback")
 
     if kind == "workout":
         return {"type": "workout",
@@ -455,3 +474,40 @@ def parse_with_pill(pill_text, food_name=""):
         return audit
     # Fallback: ask Groq to parse the pill text as food
     return parse([f"User input: {pill_text}"])
+
+
+def _audio_ext(mime_type):
+    """Map a MIME type to a file extension Groq Whisper accepts."""
+    m = (mime_type or "").lower()
+    if "mp4" in m or "m4a" in m or "mpeg" in m:
+        return "m4a"
+    if "wav" in m:
+        return "wav"
+    if "mp3" in m:
+        return "mp3"
+    return "webm"
+
+
+def transcribe_audio(blob, mime_type="audio/webm"):
+    """Transcribe a voice note via Groq Whisper. Returns trimmed text or None.
+
+    Raises ParseError with a friendly message on API problems.
+    """
+    fname = f"voice.{_audio_ext(mime_type)}"
+    try:
+        response = _get_client().audio.transcriptions.create(
+            model=config.GROQ_WHISPER_MODEL,
+            file=(fname, blob, mime_type or "audio/webm"),
+        )
+        text = (response.text or "").strip()
+    except Exception as e:
+        msg = (str(e) or "").lower()
+        if "429" in msg or "quota" in msg or "rate limit" in msg:
+            raise ParseError("Rate limit hit — wait a minute and try again.") from e
+        code = getattr(e, "status_code", None)
+        if code == 401 or "api key" in msg or "unauthorized" in msg:
+            raise ParseError("Invalid Groq API key — check GROQ_API_KEY") from e
+        if "404" in msg or "not found" in msg or "model" in msg:
+            raise ParseError("Whisper model unavailable on this account.") from e
+        raise ParseError(f"Voice transcription failed: {e}") from e
+    return text or None

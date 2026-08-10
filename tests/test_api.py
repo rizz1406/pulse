@@ -416,6 +416,56 @@ class TestAPI(unittest.TestCase):
         self.assertIn("cal_adherence", d)
         self.assertIn("protein_adherence", d)
 
+    # ── hybrid: AI-estimated macros ──
+    def test_log_ai_estimated_food(self):
+        """Unknown food → AI-estimated macros returned directly for confirmation."""
+        import parser as parser_mod
+        with mock.patch.object(parser_mod, "_generate", return_value={
+            "type": "food", "item_name": "Gulab Jamun (2 pieces)",
+            "quantity": 2, "calories": 290, "protein_g": 4,
+            "carbs_g": 52, "fat_g": 8, "serving_note": "2 small gulab jamuns"}):
+            r = self.client.post("/api/log", json={"text": "gulab jamun"})
+        self.assertEqual(r.status_code, 200)
+        d = r.get_json()
+        self.assertEqual(d["type"], "food")
+        self.assertEqual(d["source"], "ai_estimate")
+        self.assertEqual(d["calories"], 290)
+
+    # ── /api/transcribe (Groq Whisper) ──
+    def test_transcribe_endpoint(self):
+        import io
+        import parser as parser_mod
+        with mock.patch.object(parser_mod, "transcribe_audio",
+                               return_value="2 banana and 2 omelette"):
+            r = self.client.post("/api/transcribe",
+                                 data={"audio": (io.BytesIO(b"fake audio"),
+                                                "voice.webm", "audio/webm")},
+                                 content_type="multipart/form-data")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["text"], "2 banana and 2 omelette")
+
+    def test_transcribe_empty_returns_error(self):
+        import io
+        import parser as parser_mod
+        with mock.patch.object(parser_mod, "transcribe_audio", return_value=None):
+            r = self.client.post("/api/transcribe",
+                                 data={"audio": (io.BytesIO(b""),
+                                                "voice.webm", "audio/webm")},
+                                 content_type="multipart/form-data")
+        self.assertEqual(r.status_code, 422)
+
+    def test_transcribe_parse_error_mapped(self):
+        import io
+        import parser as parser_mod
+        with mock.patch.object(parser_mod, "transcribe_audio",
+                               side_effect=parser_mod.ParseError("rate limit hit")):
+            r = self.client.post("/api/transcribe",
+                                 data={"audio": (io.BytesIO(b"x"),
+                                                "voice.webm", "audio/webm")},
+                                 content_type="multipart/form-data")
+        self.assertEqual(r.status_code, 422)
+        self.assertIn("rate limit", r.get_json()["error"])
+
 
 def goals_protein_at(w):
     import goals

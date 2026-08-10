@@ -152,6 +152,17 @@ class TestFoodDB(unittest.TestCase):
         self.assertIsNotNone(d)
         self.assertGreater(d["calories"], 300)
 
+    def test_partial_multi_item_routes_to_ai(self):
+        """'2 banana and 2 omelette': omelette isn't in the local DB, so the
+        WHOLE input returns None and the AI parses macros instead — the banana
+        is never silently dropped."""
+        d = fooddb.parse_local("2 banana and 2 omelette")
+        self.assertIsNone(d)
+        # All-known combos still resolve locally.
+        d2 = fooddb.parse_local("2 banana and 2 eggs")
+        self.assertIsNotNone(d2)
+        self.assertEqual(d2["calories"], 358)  # 2 banana (214) + 2 eggs (144)
+
     # ── Quantity extraction ──
     def test_qty_with_x_multiplier(self):
         """'2x banana' = 2 bananas."""

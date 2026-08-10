@@ -90,18 +90,52 @@ class TestParser(unittest.TestCase):
         }, allow_clarify=True, audit=None)
         self.assertEqual(d["calories"], 10 * 4 + 20 * 4 + 5 * 9)
 
-    def test_parse_food(self):
+    def test_parse_food_known_db_skips_clarification(self):
+        """Hybrid: DB-known food (biryani) uses exact DB values, no pills."""
         self._fake_generate({
             "type": "food", "item_name": "Biryani", "calories": 0,
             "protein_g": 0, "carbs_g": 0, "fat_g": 0,
             "needs_clarification": True, "clarify_question": "How oily?",
             "clarify_options": ["Light", "Medium", "Rich"],
         })
-        with mock.patch.object(parser.fooddb, "parse_food", return_value=None):
-            d = parser.parse(["User input: biryani"])
-            self.assertEqual(d["type"], "food")
-            self.assertTrue(d["needs_clarification"])
-            self.assertEqual(len(d["clarify_options"]), 3)
+        # No fooddb mock — parse_local finds "biryani" in the local DB.
+        d = parser.parse(["User input: biryani"])
+        self.assertEqual(d["type"], "food")
+        self.assertEqual(d["source"], "local")
+        self.assertEqual(d["calories"], 450)  # 180 × 2.5 (default serving)
+        self.assertFalse(d["needs_clarification"])
+
+    def test_parse_food_legacy_clarify_options_kept(self):
+        """Unknown food + no estimate → legacy clarify_options still surface."""
+        self._fake_generate({
+            "type": "food", "item_name": "Pav Bhaji", "calories": 0,
+            "needs_clarification": True, "clarify_question": "How much butter?",
+            "clarify_options": ["Lite", "Regular", "Extra butter"],
+        })
+        with mock.patch.object(parser.fooddb, "parse_food", return_value=None), \
+             mock.patch.object(parser, "_check_ambiguity",
+                               return_value={"requires_clarification": False}):
+            d = parser.parse(["User input: pav bhaji"])
+        self.assertEqual(d["type"], "food")
+        self.assertTrue(d["needs_clarification"])
+        self.assertEqual(len(d["clarify_options"]), 3)
+
+    def test_parse_ai_estimate_directly(self):
+        """Unknown food + AI macros → direct preview, no ambiguity re-check."""
+        self._fake_generate({
+            "type": "food", "item_name": "Chicken Shami Kabab",
+            "quantity": 2, "calories": 240, "protein_g": 26,
+            "carbs_g": 8, "fat_g": 12,
+            "serving_note": "2 medium kebabs, pan-tossed",
+        })
+        with mock.patch.object(parser.fooddb, "parse_food", return_value=None), \
+             mock.patch.object(parser, "_check_ambiguity") as amb:
+            d = parser.parse(["User input: shami kabab"])
+        self.assertEqual(d["type"], "food")
+        self.assertEqual(d["source"], "ai_estimate")
+        self.assertEqual(d["calories"], 240)
+        self.assertFalse(d["needs_clarification"])
+        amb.assert_not_called()
 
     def test_parse_workout(self):
         self._fake_generate({"type": "workout", "exercise_name": "Bench Press",
@@ -305,7 +339,8 @@ class TestAmbiguityCheck(unittest.TestCase):
             ],
             "default_fallback": "1 cup chai with milk and sugar",
         }
-        with mock.patch.object(parser.fooddb, "parse_food", return_value=None), \
+        with mock.patch.object(parser.fooddb, "parse_local", return_value=None), \
+             mock.patch.object(parser.fooddb, "parse_food", return_value=None), \
              mock.patch.object(parser, "_check_ambiguity", return_value=amb_result):
             d = parser.parse(["User input: chai"])
             self.assertEqual(d["type"], "food")

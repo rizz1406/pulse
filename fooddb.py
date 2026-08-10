@@ -374,7 +374,10 @@ def _build_result(item_name, cal, p, c, f, source, matched_food,
 
 def _match_food_words(query_words):
     """Find the best per-100g food by word overlap.
-    Returns (food_key, food_data) or None."""
+
+    A key only matches when ALL of its words appear in the query (e.g.
+    'chicken tikka roll' must NOT become 'chicken breast' just because both
+    contain 'chicken'). Returns (food_key, food_data) or None."""
     best = None
     best_score = (0, 0)
     for key, data in FOODS.items():
@@ -382,7 +385,7 @@ def _match_food_words(query_words):
             continue  # skip per-serving entries for word matching
         key_words = set(key.split())
         overlap = len(set(query_words) & key_words)
-        if overlap > 0:
+        if overlap >= len(key_words):  # key fully covered by the query
             score = (overlap, len(key_words))
             if score > best_score:
                 best = (key, data)
@@ -407,6 +410,12 @@ def parse_local(text):
     multi = _parse_multi(text)
     if multi:
         return multi
+
+    # Multi-item separators present but one item didn't match (e.g.
+    # "2 banana and 2 omelette") → return None so the caller routes the
+    # WHOLE input to the AI instead of parsing only the first item.
+    if re.search(r'[,;+]|\band\b|\bwith\b', text):
+        return None
 
     return _parse_single(text)
 
@@ -562,19 +571,20 @@ def _parse_multi(text):
 
     for part in parts:
         d = _parse_single(part)
-        if d and d["calories"] > 0:
-            items.append(d)
-            total_cal += d["calories"]
-            total_p += d["protein_g"]
-            total_c += d["carbs_g"]
-            total_f += d["fat_g"]
-            matched_names.append(d["item_name"])
-            audit_parts.append(
-                f"{d['matched_food']}: {d['serving_g']}g × {d['qty']}x = {d['calories']}kcal"
-            )
-
-    if not items:
-        return None
+        if not d or d["calories"] <= 0:
+            # One unrecognized item — return None so the caller routes the
+            # WHOLE input to the AI instead of silently dropping this item
+            # (e.g. "2 banana and 2 omelette" → AI parses both, not just banana).
+            return None
+        items.append(d)
+        total_cal += d["calories"]
+        total_p += d["protein_g"]
+        total_c += d["carbs_g"]
+        total_f += d["fat_g"]
+        matched_names.append(d["item_name"])
+        audit_parts.append(
+            f"{d['matched_food']}: {d['serving_g']}g × {d['qty']}x = {d['calories']}kcal"
+        )
 
     item_name = " + ".join(matched_names)
     return _build_result(
