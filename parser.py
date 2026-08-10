@@ -6,9 +6,12 @@ Understands casual and Hinglish input.
 Three-tier food parsing:
   1. Local food database (unlimited, instant, ~150 common foods)
   2. FatSecret search API (free 5,000/day)
-  3. Gemini AI (quota-limited, best quality, handles photos/voice)
+  3. Gemini AI (quota-limited — ONLY for ambiguous input parsing, NOT nutrition)
 
 Photos and voice always go to Gemini (local DB can't see/hear).
+Gemini must NEVER invent nutrition values — it classifies input and extracts
+structure (quantity, food name, units). Actual nutrition comes from local DB
+or FatSecret only.
 """
 
 import json
@@ -18,8 +21,7 @@ import config
 import portions
 import fooddb
 
-# Lazy client — created on first use, not at import time. Keeps worker startup
-# light so it boots fast and stays under memory limits on small hosts.
+# Lazy client — created on first use, not at import time.
 _client = None
 
 
@@ -29,7 +31,7 @@ def _get_client():
         _client = genai.Client(api_key=config.GEMINI_API_KEY)
     return _client
 
-# JSON response schema (dict form is accepted by google-genai).
+# JSON response schema for Gemini
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -56,54 +58,48 @@ RESPONSE_SCHEMA = {
     "required": ["type"],
 }
 
+# ─────────────────────────────────────────────────────────────
+# Gemini prompt — CRITICAL: Gemini must NOT invent nutrition.
+# It only classifies input and extracts structure (food name,
+# quantity, units). Actual nutrition is always looked up from
+# the local DB or FatSecret.
+# ─────────────────────────────────────────────────────────────
 UNIFIED_PROMPT = (
     "You are the engine of a personal health tracker. Read the input (text, a "
     "transcribed voice note, or a food photo; may be casual, misspelled, or "
-    "Hinglish) and classify it, then fill ONLY the fields for that type.\n\n"
+    "Hinglish) and classify it.\n\n"
     "TYPE = one of:\n"
     '- "food": something eaten/drunk.\n'
     '- "workout": exercise/training done.\n'
     '- "weight": reporting body weight (e.g. "I weigh 76kg", "weight 76").\n'
-    '- "water": drinking water (e.g. "drank 2 glasses water", "2 litre paani", '
-    '"1 bottle water"). Fill ml (millilitres) — assume a glass ≈ 250ml, a bottle '
-    '≈ 500ml, and convert litres/half-litres accordingly. Never classify '
-    'juice/milk/soda as water — those are food.\n'
+    '- "water": drinking water (e.g. "drank 2 glasses water", "2 litre paani"). '
+    'Fill ml (millilitres) — assume a glass ≈ 250ml, a bottle ≈ 500ml. '
+    'Never classify juice/milk/soda as water.\n'
     '- "chat": anything else.\n\n'
-    "IF food: estimate nutrition with standard data, accounting for Indian "
-    "dishes/portions. Fill item_name (short English summary), calories, protein_g, "
-    "carbs_g, fat_g, fiber_g, sugar_g (all integers, never 0 unless truly none), "
-    "and confidence_notes (what portion/prep you assumed). "
-    "CRITICAL: calories must ALWAYS be a realistic positive number consistent with "
-    "the macros — if a food has protein or fat, it MUST have calories (protein=4 "
-    "kcal/g, carbs=4 kcal/g, fat=9 kcal/g; calories should roughly equal "
-    "protein_g*4 + carbs_g*4 + fat_g*9). Never return 0 calories for a real food. "
-    "Example: 2 boiled eggs ≈ 140 kcal, 12g protein, 1g carbs, 10g fat. "
-    "Read portion and "
-    "richness words carefully and reflect them: amount cues ('big bowl','2 plates',"
-    "'3 rotis','thoda','lots of') scale the portion; oil/richness cues ('oily',"
-    "'bit oily','lots of gravy','rich','buttery','ghee','home-style','light') "
-    "adjust fat and calories — oil is the biggest hidden calorie source, so weight "
-    "these heavily. Use best judgment on typical portions when brief. Only set "
-    "needs_clarification=true for a genuinely ambiguous high-variance dish where "
-    "the user gave NO portion/richness detail AND the calorie swing is large "
-    "(e.g. a heavy meat curry or biryani with no amount). Then put ONE short "
-    "clarify_question and 2-4 short clarify_options (e.g. 'How oily?' -> "
-    "['Light / home-style','Medium','Rich / restaurant']). For everyday or "
-    "clearly-described foods, needs_clarification=false. Always still fill "
-    "best-guess numbers as a fallback.\n\n"
-    "IF workout: fill exercise_name (standardized English), weight_kg (number, "
-    "0 = bodyweight), sets, reps (estimate if only one given), notes (extra "
-    "detail or empty).\n\n"
+    "IF food: Your job is ONLY to identify the food and quantity. Do NOT "
+    "estimate calories or macros — the system looks those up from a database. "
+    "Fill:\n"
+    "- item_name: short English name of the food (e.g. 'boiled eggs', 'chapati', "
+    "'chicken biryani')\n"
+    "- calories: set to 0 (the system will fill this from the database)\n"
+    "- protein_g, carbs_g, fat_g: set to 0 (the system will fill these)\n"
+    "- confidence_notes: what portion/prep you identified (e.g. '2 large eggs, "
+    "boiled' or '2 chapatis, home-style')\n"
+    "- needs_clarification: true ONLY if the food is genuinely ambiguous with "
+    "high calorie variance AND the user gave no portion info (e.g. just 'curry' "
+    "or 'biryani' with no amount). Then put ONE short clarify_question and "
+    "2-4 clarify_options.\n"
+    "- For everyday or clearly-described foods, needs_clarification=false.\n\n"
+    "IF workout: fill exercise_name (standardized English), weight_kg (0 = "
+    "bodyweight), sets, reps (estimate if only one given), notes.\n\n"
     "IF weight: fill weight_kg (number, convert from lbs if needed) and notes.\n\n"
-    "IF chat: fill 'reply' with one or two short, warm, lightly witty sentences "
-    "matching the user's language, gently steering them back to logging meals or "
-    "workouts. Never say 'invalid'."
+    "IF chat: fill 'reply' with one or two short, warm sentences matching the "
+    "user's language, gently steering them back to logging meals or workouts."
 )
 
 
 def _to_parts(payload, prompt):
-    """Convert our simple payload (strings + {mime_type,data} dicts) into
-    google-genai content parts, with the prompt first."""
+    """Convert payload into google-genai content parts, with the prompt first."""
     parts = [prompt]
     for p in payload:
         if isinstance(p, str):
@@ -157,15 +153,24 @@ def _float(v):
         return 0.0
 
 
-def _shape_food(d, allow_clarify=True):
+def _shape_food(d, allow_clarify=True, audit=None):
+    """Shape a food result dict. If audit is provided, use it for nutrition
+    (Gemini's values are ignored — the database is the source of truth)."""
+    if audit:
+        # Use the database lookup result as the source of truth
+        return audit
+
+    # Fallback: if we somehow got here without a database lookup,
+    # use Gemini's values but log a warning
     cal = _int(d.get("calories"))
     p = _int(d.get("protein_g"))
     cb = _int(d.get("carbs_g"))
     ft = _int(d.get("fat_g"))
-    # Safety net: if the model returns 0 calories but real macros, reconstruct.
+    # Safety: reconstruct calories from macros if missing
     macro_cal = p * 4 + cb * 4 + ft * 9
     if cal == 0 and macro_cal > 0:
         cal = macro_cal
+
     return {
         "type": "food",
         "item_name": d.get("item_name") or "Unknown meal",
@@ -175,14 +180,22 @@ def _shape_food(d, allow_clarify=True):
         "needs_clarification": bool(d.get("needs_clarification")) and allow_clarify,
         "clarify_question": d.get("clarify_question", "") if allow_clarify else "",
         "clarify_options": d.get("clarify_options", []) if allow_clarify else [],
+        "source": "gemini_fallback",
+        "matched_food": d.get("item_name", ""),
+        "serving_g": 0,
+        "qty": 1,
     }
 
 
 def parse(payload):
-    """Single Gemini call: classify + extract. Returns a normalized dict."""
-    prompt = UNIFIED_PROMPT
+    """Single call: classify + extract. Returns a normalized dict.
+
+    For food: tries local DB / FatSecret first (zero API cost).
+    Only calls Gemini for non-food or when local lookup fails.
+    """
     text_bits = " ".join(p for p in payload if isinstance(p, str))
     hint = portions.hint_for(text_bits)
+    prompt = UNIFIED_PROMPT
     if hint:
         prompt = prompt + hint
 
@@ -193,11 +206,24 @@ def parse(payload):
         if local_food:
             return local_food
 
+    # Gemini path: classify input, extract structure
     d = _generate(payload, prompt)
     kind = d.get("type", "chat")
 
     if kind == "food":
-        return _shape_food(d, allow_clarify=True)
+        # Gemini identified the food but didn't give nutrition (we told it not to).
+        # Try to look it up in the database using the identified food name.
+        food_name = d.get("item_name", "")
+        audit = fooddb.parse_food(food_name) if food_name else None
+
+        # If Gemini gave specific portion info in confidence_notes, try to
+        # reconstruct a more specific query
+        if not audit and food_name:
+            # Try the original text with the Gemini-identified name
+            audit = fooddb.parse_food(text_bits)
+
+        return _shape_food(d, allow_clarify=True, audit=audit)
+
     if kind == "workout":
         return {"type": "workout",
                 "exercise_name": d.get("exercise_name") or "Unknown",
@@ -210,11 +236,11 @@ def parse(payload):
     if kind == "water":
         return {"type": "water", "ml": _int(d.get("ml")) or 250}
     return {"type": "chat", "reply": (d.get("reply") or "").strip() or
-            "I'm your food & workout tracker — tell me what you ate or lifted. 🍽💪"}
+            "I'm your food & workout tracker — tell me what you ate or lifted. 💪"}
 
 
 def parse_food(payload, clarify_round=0):
-    """Food-only parse used for clarification re-runs. One call."""
+    """Food-only parse for clarification re-runs. One Gemini call."""
     prompt = UNIFIED_PROMPT
     text_bits = " ".join(p for p in payload if isinstance(p, str))
     hint = portions.hint_for(text_bits)
@@ -225,7 +251,12 @@ def parse_food(payload, clarify_round=0):
                   "Set needs_clarification=false and give your best final estimate now.")
     prompt = prompt + "\n\n(Treat this input as FOOD.)"
     d = _generate(payload, prompt)
-    return _shape_food(d, allow_clarify=(clarify_round < 2))
+    # For clarification, we need to look up nutrition from the database
+    food_name = d.get("item_name", "")
+    audit = fooddb.parse_food(food_name) if food_name else None
+    if not audit:
+        audit = fooddb.parse_food(text_bits)
+    return _shape_food(d, allow_clarify=(clarify_round < 2), audit=audit)
 
 
 def reparse_food_with_answer(original_text, question, answer, clarify_round=1):

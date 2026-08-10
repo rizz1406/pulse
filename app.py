@@ -53,6 +53,14 @@ def login_required(f):
     return wrapper
 
 
+def _days_arg(default=30):
+    """Safe 'days' query param: int in 1..365, or the default if malformed."""
+    try:
+        return max(1, min(int(request.args.get("days", default)), 365))
+    except (TypeError, ValueError):
+        return default
+
+
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.get_json(force=True)
@@ -142,14 +150,26 @@ def confirm():
     d = request.get_json(force=True)
     t = d.get("type")
     if t == "food":
+        for k in ("item_name", "calories", "protein_g", "carbs_g", "fat_g"):
+            if k not in d:
+                return jsonify({"error": f"missing field: {k}"}), 400
         storage.save_food(d)
         portions.remember(d)  # learn this user's portion
     elif t == "workout":
+        if not d.get("exercise_name"):
+            return jsonify({"error": "missing exercise_name"}), 400
         storage.save_workout(d)
     elif t == "weight":
-        storage.save_weight(d.get("weight_kg", 0), d.get("notes", ""))
+        kg = d.get("weight_kg")
+        if not isinstance(kg, (int, float)) or not (0 < float(kg) < 500):
+            return jsonify({"error": "invalid weight_kg"}), 400
+        storage.save_weight(float(kg), d.get("notes", ""))
     elif t == "water":
-        storage.add_water(d.get("ml", 250))
+        try:
+            ml = max(0, min(int(d.get("ml", 250)), 5000))
+        except (TypeError, ValueError):
+            return jsonify({"error": "bad ml"}), 400
+        storage.add_water(ml)
     else:
         return jsonify({"error": "bad type"}), 400
     return jsonify({"ok": True, "streak": storage.current_streak()})
@@ -194,7 +214,7 @@ def relog():
 @app.route("/api/progress")
 @login_required
 def progress():
-    days = int(request.args.get("days", 60))
+    days = _days_arg(60)
     data = storage.weight_trend(days)
     t = goals.current_targets()
     if t:
@@ -225,13 +245,18 @@ def get_goal():
 def set_goal():
     d = request.get_json(force=True)
     try:
+        weight = float(d["weight_kg"])
+        height = float(d["height_cm"])
+        age = int(d["age"])
+        if not (0 < weight < 500 and 0 < height < 300 and 0 < age < 120):
+            return jsonify({"error": "bad input: out of range"}), 400
         goals.save_goal(
-            height_cm=float(d["height_cm"]),
-            age=int(d["age"]),
+            height_cm=height,
+            age=age,
             sex=d.get("sex", "male"),
             activity=d.get("activity", "moderate"),
             objective=d.get("objective", "cut_steady"),
-            current_weight=float(d["weight_kg"]),
+            current_weight=weight,
         )
     except (KeyError, ValueError, TypeError) as e:
         return jsonify({"error": f"bad input: {e}"}), 400
@@ -285,7 +310,7 @@ def water():
 @app.route("/api/weekly")
 @login_required
 def weekly():
-    days = int(request.args.get("days", 7))
+    days = _days_arg(7)
     return jsonify(storage.weekly_summary(days))
 
 
@@ -305,7 +330,7 @@ def export_data():
 @app.route("/api/analytics")
 @login_required
 def analytics():
-    days = int(request.args.get("days", 30))
+    days = _days_arg(30)
     return jsonify(storage.analytics(days))
 
 
@@ -315,6 +340,16 @@ def analytics():
 @app.errorhandler(500)
 def _server_error(e):
     return jsonify({"error": "Something went wrong server-side. Try again."}), 500
+
+
+@app.errorhandler(400)
+def _bad_request(e):
+    return jsonify({"error": "bad request"}), 400
+
+
+@app.errorhandler(404)
+def _not_found(e):
+    return jsonify({"error": "not found"}), 404
 
 
 # ─────────────────────────────────────────────────────────────

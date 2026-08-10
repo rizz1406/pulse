@@ -11,6 +11,12 @@ import db  # noqa: E402
 import portions  # noqa: E402
 
 
+# Hermetic pinning — config may already be imported by another test module
+# reading real .env values; force our own isolation regardless of order.
+config.DB_PATH = os.path.join(tempfile.mkdtemp(), "storage.db")
+config.LOCAL_TZ = __import__("zoneinfo").ZoneInfo("UTC")
+
+
 def clean():
     with db.connect() as c:
         for t in ("food", "workout", "weight", "water", "goal", "portion_memory"):
@@ -21,6 +27,8 @@ class TestStorage(unittest.TestCase):
     def setUp(self):
         storage.init_db()
         portions.init_portion_table()
+        import goals
+        goals.init_goal_table()
         clean()
 
     def test_food_roundtrip(self):
@@ -110,6 +118,19 @@ class TestStorage(unittest.TestCase):
         a = storage.analytics(30)
         self.assertEqual(a["macro_split"]["protein"], 18)
         self.assertEqual(a["total_workouts"], 0)
+
+    def test_numeric_coercion_save_and_update(self):
+        """String numbers from a client must not poison numeric columns."""
+        eid = storage.save_food({"item_name": "Oats", "calories": "150",
+                                 "protein_g": "5", "carbs_g": 27, "fat_g": "x"})
+        row = storage.get_food(eid)
+        self.assertEqual(row["calories"], 150)
+        self.assertEqual(row["protein_g"], 5)
+        self.assertEqual(row["fat_g"], 0)  # garbage → 0
+        storage.update_food(eid, {"calories": "abc"})
+        self.assertEqual(storage.get_food(eid)["calories"], 0)
+        storage.update_food(eid, {"calories": "220"})
+        self.assertEqual(storage.get_food(eid)["calories"], 220)
 
 
 if __name__ == "__main__":

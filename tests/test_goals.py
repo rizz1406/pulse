@@ -12,6 +12,12 @@ import db  # noqa: E402
 import portions  # noqa: E402
 
 
+# Hermetic pinning — config may already be imported by another test module
+# reading real .env values; force our own isolation regardless of order.
+config.DB_PATH = os.path.join(tempfile.mkdtemp(), "goals.db")
+config.LOCAL_TZ = __import__("zoneinfo").ZoneInfo("UTC")
+
+
 def clean():
     with db.connect() as c:
         for t in ("food", "workout", "weight", "water", "goal", "portion_memory"):

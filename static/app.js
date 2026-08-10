@@ -18,6 +18,11 @@ function showApp(){
   document.getElementById('dock').style.display='block';
   refreshToday();
 }
+function showLogin(){
+  document.getElementById('appWrap').style.display='none';
+  document.getElementById('dock').style.display='none';
+  document.getElementById('login').style.display='flex';
+}
 
 /* ---------- TABS ---------- */
 function switchTab(t){
@@ -100,6 +105,7 @@ async function sendPayload(opts){
       res=await fetch('/api/log',{method:'POST',body:opts.form});
     }
     const d=await res.json();
+    if(r.status===401){ showLogin(); return; }
     if(!res.ok){ toast(d.error||'Something went wrong'); return; }
     handleResult(d);
   }catch(e){ toast('Network error'); }
@@ -149,12 +155,15 @@ function handleResult(d){
   pending=d;
   const s=document.getElementById('sheet');
   if(d.type==='food'){
+    const noNutrition = d.calories===0 && d.source==='gemini_fallback';
     s.innerHTML=`<div class="ph">🍽 ${esc(d.item_name)}</div>
       <div class="kcal">${d.calories} kcal</div>
       <div class="macros">
         <span>💪 ${d.protein_g}g protein</span><span>🍞 ${d.carbs_g}g carbs</span><span>🥑 ${d.fat_g}g fat</span>
         <span>🌾 ${d.fiber_g}g fiber</span><span>🍬 ${d.sugar_g}g sugar</span></div>
+      ${noNutrition?`<div class="note">⚠️ Couldn't find nutrition for this — it will be logged as 0 kcal. Edit it after logging to add calories.</div>`:''}
       ${d.confidence_notes?`<div class="note">${esc(d.confidence_notes)}</div>`:''}
+      ${d.source?`<div class="note" style="opacity:.55;font-size:11px">source: ${esc(d.source)} · serving ${d.serving_g}g ${d.qty?`× ${d.qty}`:''}${d.matched_food?` · matched "${esc(d.matched_food)}"`:''}</div>`:''}
       <div class="sheet-actions">
         <button class="btn-cancel" onclick="closeSheet()">Cancel</button>
         <button class="btn-save" onclick="confirmEntry()">Log it</button></div>`;
@@ -191,7 +200,7 @@ function showClarify(d){
     fallback: d
   };
   const opts=d.clarify_options.map(o=>
-    `<button class="clarify-opt" onclick="answerClarify('${esc(o).replace(/'/g,"\\'")}')">${esc(o)}</button>`
+    `<button class="clarify-opt" onclick="answerClarify('${jsStr(o)}')">${esc(o)}</button>`
   ).join('');
   document.getElementById('sheet').innerHTML=
     `<div class="ph">🍽 ${esc(d.item_name)}</div>
@@ -298,7 +307,7 @@ function renderToday(d){
   const list=document.getElementById('todayList');
   let html='';
   d.foods.forEach(f=>{
-    html+=`<div class="entry" onclick='openEdit("food",${f.id},${JSON.stringify(f).replace(/'/g,"&#39;")})'><div class="emoji">🍽</div><div class="body">
+    html+=`<div class="entry" onclick='openEdit("food",${f.id},${jsObj(f)})'><div class="emoji">🍽</div><div class="body">
       <div class="t">${esc(f.item_name)}</div>
       <div class="s">${f.calories} kcal · ${f.protein_g}p / ${f.carbs_g}c / ${f.fat_g}f</div></div>
       <div class="time">${f.ts.slice(11,16)}</div>
@@ -306,7 +315,7 @@ function renderToday(d){
   });
   d.workouts.forEach(w=>{
     const wt=w.weight_kg?`${w.weight_kg}kg `:'';
-    html+=`<div class="entry" onclick='openEdit("workout",${w.id},${JSON.stringify(w).replace(/'/g,"&#39;")})'><div class="emoji">🏋</div><div class="body">
+    html+=`<div class="entry" onclick='openEdit("workout",${w.id},${jsObj(w)})'><div class="emoji">🏋</div><div class="body">
       <div class="t">${esc(w.exercise_name)}</div>
       <div class="s">${wt}${w.sets}×${w.reps}</div></div>
       <div class="time">${w.ts.slice(11,16)}</div>
@@ -341,7 +350,7 @@ async function loadRecents(){
   const wrap=document.getElementById('recentsRow');
   if(!d.meals||!d.meals.length){ wrap.innerHTML=''; return; }
   const chips=d.meals.map(m=>
-    `<div class="chip" onclick="relog('${esc(m.item_name).replace(/'/g,"\\'")}')">
+    `<div class="chip" onclick="relog('${jsStr(m.item_name)}')">
        <span class="plus">+</span>${esc(m.item_name)} <span class="kc">${m.calories}kc</span></div>`
   ).join('');
   wrap.innerHTML=`<div class="recents-wrap"><h2 class="eyebrow" style="margin:0 0 10px">Quick add — your usual</h2>
@@ -563,6 +572,14 @@ function animateCount(id, to){
   requestAnimationFrame(step);
 }
 function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+/* Safe embedding inside a JS string that lives in an HTML attribute:
+   single quotes become \u0027 (entity-decoding never touches it). */
+function jsStr(s){return esc(s).replace(/\\/g,'\\u005c').replace(/'/g,'\\u0027');}
+/* JSON object for inline onclick: escape ' as \u0027 so apostrophes in
+   names can't break the single-quoted attribute / JS string. */
+function jsObj(o){return JSON.stringify(o)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'\\u0027');}
 let toastTimer;
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');
   clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2200);}

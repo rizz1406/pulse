@@ -54,6 +54,20 @@ def _now():
 # ─────────────────────────────────────────────────────────────
 # SAVE
 # ─────────────────────────────────────────────────────────────
+def _int(v):
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _float(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def save_food(d):
     now = _now()
     with _conn() as c:
@@ -61,9 +75,10 @@ def save_food(d):
             "INSERT INTO food (ts, day, item_name, calories, protein_g, carbs_g, "
             "fat_g, fiber_g, sugar_g, notes, raw_input) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (now.strftime("%Y-%m-%d %H:%M:%S"), now.strftime("%Y-%m-%d"),
-             d["item_name"], d["calories"], d["protein_g"], d["carbs_g"], d["fat_g"],
-             d.get("fiber_g", 0), d.get("sugar_g", 0), d.get("confidence_notes", ""),
-             d.get("_raw", "")),
+             d["item_name"], _int(d["calories"]), _int(d["protein_g"]),
+             _int(d["carbs_g"]), _int(d["fat_g"]),
+             _int(d.get("fiber_g", 0)), _int(d.get("sugar_g", 0)),
+             d.get("confidence_notes", ""), d.get("_raw", "")),
         )
         return c.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
 
@@ -75,8 +90,8 @@ def save_workout(d):
             "INSERT INTO workout (ts, day, exercise_name, weight_kg, sets, reps, "
             "notes, raw_input) VALUES (?,?,?,?,?,?,?,?)",
             (now.strftime("%Y-%m-%d %H:%M:%S"), now.strftime("%Y-%m-%d"),
-             d["exercise_name"], d.get("weight_kg") or 0, d["sets"], d["reps"],
-             d.get("notes", ""), d.get("_raw", "")),
+             d["exercise_name"], _float(d.get("weight_kg")), _int(d["sets"]),
+             _int(d["reps"]), d.get("notes", ""), d.get("_raw", "")),
         )
         return c.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
 
@@ -85,7 +100,8 @@ def save_weight(kg, notes=""):
     now = _now()
     with _conn() as c:
         c.execute("INSERT INTO weight (ts, day, weight_kg, notes) VALUES (?,?,?,?)",
-                  (now.strftime("%Y-%m-%d %H:%M:%S"), now.strftime("%Y-%m-%d"), kg, notes))
+                  (now.strftime("%Y-%m-%d %H:%M:%S"), now.strftime("%Y-%m-%d"),
+                   _float(kg), notes))
 
 
 def delete_entry(kind, entry_id):
@@ -132,11 +148,12 @@ def update_food(entry_id, fields):
     """Edit a logged food entry. fields = dict of columns to update."""
     allowed = {"item_name", "calories", "protein_g", "carbs_g", "fat_g",
                "fiber_g", "sugar_g"}
+    numeric = {"calories", "protein_g", "carbs_g", "fat_g", "fiber_g", "sugar_g"}
     sets, vals = [], []
     for k, v in fields.items():
         if k in allowed:
             sets.append(f"{k}=?")
-            vals.append(v)
+            vals.append(_int(v) if k in numeric else str(v))
     if not sets:
         return False
     vals.append(entry_id)
@@ -147,11 +164,12 @@ def update_food(entry_id, fields):
 
 def update_workout(entry_id, fields):
     allowed = {"exercise_name", "weight_kg", "sets", "reps", "notes"}
+    numeric = {"weight_kg", "sets", "reps"}
     sets, vals = [], []
     for k, v in fields.items():
         if k in allowed:
             sets.append(f"{k}=?")
-            vals.append(v)
+            vals.append(_float(v) if k in numeric else str(v))
     if not sets:
         return False
     vals.append(entry_id)
