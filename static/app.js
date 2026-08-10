@@ -1,22 +1,5 @@
 let pending=null, charts={};
 
-/* ---------- THEME ---------- */
-function applyTheme(t){
-  document.documentElement.setAttribute('data-theme', t);
-  try{ localStorage.setItem('pulse-theme', t); }catch(e){}
-  const btn=document.querySelector('[title="Toggle theme"]');
-  if(btn) btn.textContent = t==='light' ? '🌙' : '🌓';
-}
-function toggleTheme(){
-  const cur=document.documentElement.getAttribute('data-theme')==='light'?'dark':'light';
-  applyTheme(cur);
-}
-(function(){
-  let t='dark';
-  try{ t=localStorage.getItem('pulse-theme')||'dark'; }catch(e){}
-  applyTheme(t);
-})();
-
 /* ---------- AUTH ---------- */
 async function checkAuth(){
   const r=await fetch('/api/me'); const d=await r.json();

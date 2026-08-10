@@ -4,8 +4,8 @@
   "description": "Personal health tracker — calories, macros, workouts, weight",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#070b07",
-  "theme_color": "#070b07",
+  "background_color": "#0a0d0b",
+  "theme_color": "#0a0d0b",
   "orientation": "portrait",
   "icons": [
     {
