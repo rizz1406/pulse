@@ -164,7 +164,7 @@ class TestParser(unittest.TestCase):
     def test_generate_maps_rate_limit_error(self):
         """429/quota exceptions surface a specific message (not a generic one)."""
         client = mock.Mock()
-        client.models.generate_content.side_effect = \
+        client.chat.completions.create.side_effect = \
             Exception("429 RESOURCE_EXHAUSTED: quota exceeded")
         with mock.patch.object(parser, "_get_client", return_value=client), \
                 mock.patch.object(parser, "_generate", _REAL_GENERATE):
@@ -175,13 +175,40 @@ class TestParser(unittest.TestCase):
     def test_generate_maps_model_not_found_error(self):
         """Unknown model strings surface a model error (e.g. env misconfig)."""
         client = mock.Mock()
-        client.models.generate_content.side_effect = \
+        client.chat.completions.create.side_effect = \
             Exception("404 NOT_FOUND: models/gemini-9.9-flash not found")
         with mock.patch.object(parser, "_get_client", return_value=client), \
                 mock.patch.object(parser, "_generate", _REAL_GENERATE):
             with self.assertRaises(parser.ParseError) as ctx:
                 parser._generate(["x"], "prompt")
         self.assertIn("model", str(ctx.exception).lower())
+
+    def test_generate_returns_fallback_on_other_api_error(self):
+        """Non-quota/model errors return a clean error dict, not an exception."""
+        client = mock.Mock()
+        client.chat.completions.create.side_effect = \
+            Exception("upstream weirdness happened")
+        with mock.patch.object(parser, "_get_client", return_value=client), \
+                mock.patch.object(parser, "_generate", _REAL_GENERATE):
+            d = parser._generate(["x"], "prompt")
+        self.assertEqual(d["type"], "chat")
+        self.assertIn("error", d)
+
+    def test_generate_parses_groq_json_response(self):
+        """A normal Groq response's content is parsed into a dict."""
+        client = mock.Mock()
+        msg = mock.Mock()
+        msg.content = '{"type": "food", "item_name": "paneer tikka"}'
+        client.chat.completions.create.return_value = \
+            mock.Mock(choices=[mock.Mock(message=msg)])
+        with mock.patch.object(parser, "_get_client", return_value=client), \
+                mock.patch.object(parser, "_generate", _REAL_GENERATE):
+            d = parser._generate(["x"], "prompt")
+        self.assertEqual(d["type"], "food")
+        self.assertEqual(d["item_name"], "paneer tikka")
+        self.assertEqual(
+            client.chat.completions.create.call_args.kwargs["model"],
+            parser.GROQ_MODEL)
 
 
 class TestServingConversion(unittest.TestCase):

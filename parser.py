@@ -6,17 +6,18 @@ Understands casual and Hinglish input.
 Three-tier food parsing:
   1. Local food database (unlimited, instant, ~150 common foods)
   2. FatSecret search API (free 5,000/day)
-  3. Gemini AI (quota-limited — ONLY for ambiguous input parsing, NOT nutrition)
+  3. Groq AI (quota-limited — ONLY for ambiguous input parsing, NOT nutrition)
 
-Photos and voice always go to Gemini (local DB can't see/hear).
-Gemini must NEVER invent nutrition values — it classifies input and extracts
+Photos and voice always go to Groq (local DB can't see/hear).
+Groq must NEVER invent nutrition values — it classifies input and extracts
 structure (quantity, food name, units). Actual nutrition comes from local DB
 or FatSecret only.
 """
 
+import base64
 import json
-from google import genai
-from google.genai import types
+import openai
+from openai import OpenAI
 import config
 import portions
 import fooddb
@@ -24,42 +25,21 @@ import fooddb
 # Lazy client — created on first use, not at import time.
 _client = None
 
+# Groq model used for classification / clarification / chat.
+GROQ_MODEL = "llama-3.3-70b-versatile"
+
 
 def _get_client():
     global _client
     if _client is None:
-        _client = genai.Client(api_key=config.GEMINI_API_KEY)
+        _client = OpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=config.GROQ_API_KEY,
+        )
     return _client
 
-# JSON response schema for Gemini
-RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "type": {"type": "string", "enum": ["food", "workout", "weight", "water", "chat"]},
-        "item_name": {"type": "string"},
-        "calories": {"type": "integer"},
-        "protein_g": {"type": "integer"},
-        "carbs_g": {"type": "integer"},
-        "fat_g": {"type": "integer"},
-        "fiber_g": {"type": "integer"},
-        "sugar_g": {"type": "integer"},
-        "confidence_notes": {"type": "string"},
-        "needs_clarification": {"type": "boolean"},
-        "clarify_question": {"type": "string"},
-        "clarify_options": {"type": "array", "items": {"type": "string"}},
-        "exercise_name": {"type": "string"},
-        "weight_kg": {"type": "number"},
-        "sets": {"type": "integer"},
-        "reps": {"type": "integer"},
-        "ml": {"type": "integer"},
-        "notes": {"type": "string"},
-        "reply": {"type": "string"},
-    },
-    "required": ["type"],
-}
-
 # ─────────────────────────────────────────────────────────────
-# Gemini prompt — CRITICAL: Gemini must NOT invent nutrition.
+# Groq prompt — CRITICAL: Groq must NOT invent nutrition.
 # It only classifies input and extracts structure (food name,
 # quantity, units). Actual nutrition is always looked up from
 # the local DB or FatSecret.
@@ -99,15 +79,21 @@ UNIFIED_PROMPT = (
 
 
 def _to_parts(payload, prompt):
-    """Convert payload into google-genai content parts, with the prompt first."""
-    parts = [prompt]
+    """Convert payload into OpenAI chat content parts, with the prompt first."""
+    content = [{"type": "text", "text": prompt}]
     for p in payload:
         if isinstance(p, str):
-            parts.append(p)
+            content.append({"type": "text", "text": p})
         elif isinstance(p, dict) and "data" in p:
-            parts.append(types.Part.from_bytes(
-                data=p["data"], mime_type=p.get("mime_type", "application/octet-stream")))
-    return parts
+            data = p["data"]
+            if not isinstance(data, str):
+                data = base64.b64encode(data).decode("ascii")
+            mime = p.get("mime_type", "application/octet-stream")
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{data}"},
+            })
+    return content
 
 
 class ParseError(Exception):
@@ -115,35 +101,46 @@ class ParseError(Exception):
 
 
 def _generate(payload, prompt):
-    """One Gemini call returning parsed JSON dict."""
-    contents = _to_parts(payload, prompt)
+    """One Groq call returning parsed JSON dict."""
+    messages = [{"role": "user", "content": _to_parts(payload, prompt)}]
     try:
-        resp = _get_client().models.generate_content(
-            model=config.GEMINI_MODEL,
-            contents=contents,
-            timeout=10,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=RESPONSE_SCHEMA,
-            ),
+        response = _get_client().chat.completions.create(
+            model=GROQ_MODEL,
+            messages=messages,
+            temperature=0.2,
+            response_format={"type": "json_object"},
         )
+        text = response.choices[0].message.content or "{}"
+    except openai.RateLimitError as e:
+        raise ParseError("Groq rate limit hit — wait a minute and try again.") from e
+    except openai.APIError as e:
+        msg = str(e).lower()
+        if e.status_code == 404 or "not found" in msg or "404" in msg:
+            raise ParseError(
+                "Groq model unavailable — check the model configured in parser.py.") from e
+        if e.status_code == 401 or "api key" in msg or "unauthorized" in msg:
+            return {"type": "chat", "error": "Invalid Groq API key — check GROQ_API_KEY"}
+        if "timeout" in msg or "timed out" in msg:
+            return {"type": "chat", "error": "AI timed out — try again"}
+        if "connection" in msg or "network" in msg or "dns" in msg:
+            return {"type": "chat", "error": "Network hiccup — try again"}
+        return {"type": "chat", "error": f"AI error: {e}"}
     except Exception as e:
         msg = str(e).lower()
-        if "api key" in msg or "unauthorized" in msg or "permission" in msg:
+        if "429" in msg or "quota" in msg or "rate limit" in msg:
+            raise ParseError("Groq rate limit hit — wait a minute and try again.") from e
+        if "404" in msg or "not found" in msg:
             raise ParseError(
-                "Couldn't talk to Gemini — the API key looks invalid. Check GEMINI_API_KEY.") from e
-        if "429" in msg or "rate" in msg or "quota" in msg:
-            raise ParseError("Gemini rate limit hit — wait a minute and try again.") from e
-        if "not found" in msg or "model" in msg:
-            raise ParseError(
-                "Gemini model unavailable — check GEMINI_MODEL "
-                "(e.g. gemini-2.0-flash).") from e
+                "Groq model unavailable — check the model configured in parser.py.") from e
         if "timeout" in msg or "timed out" in msg:
-            raise ParseError("Gemini took too long — try again.") from e
+            return {"type": "chat", "error": "AI timed out — try again"}
         if "connection" in msg or "network" in msg or "dns" in msg:
-            raise ParseError("Network hiccup talking to Gemini — try again.") from e
-        raise ParseError(f"Gemini error: {e}") from e
-    return json.loads(resp.text)
+            return {"type": "chat", "error": "Network hiccup — try again"}
+        return {"type": "chat", "error": f"AI error: {e}"}
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return {"type": "chat", "error": "AI returned unparseable output — try again."}
 
 
 def _int(v):

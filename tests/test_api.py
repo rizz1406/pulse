@@ -5,7 +5,7 @@ from unittest import mock
 
 os.environ["DB_PATH"] = os.path.join(tempfile.mkdtemp(), "api.db")
 os.environ["LOCAL_TZ"] = "UTC"
-os.environ["GEMINI_API_KEY"] = "test-fake-key"
+os.environ["GROQ_API_KEY"] = "test-fake-key"
 os.environ["APP_PASSCODE"] = "testpass"
 
 from zoneinfo import ZoneInfo
