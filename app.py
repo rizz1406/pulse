@@ -6,6 +6,8 @@ A simple passcode gates access so only you can use it.
 
 import base64
 import functools
+import json
+import urllib.request
 
 from flask import (
     Flask, request, jsonify, session, send_from_directory, redirect
@@ -237,6 +239,35 @@ def recents():
     return jsonify({"meals": storage.recent_meals(8)})
 
 
+@app.route("/api/autocomplete")
+@login_required
+def autocomplete():
+    """Search local DB + recent meals for autocomplete suggestions."""
+    q = (request.args.get("q") or "").strip().lower()
+    if len(q) < 1:
+        return jsonify({"suggestions": []})
+    results = []
+    seen = set()
+    # 1. Local food DB — prefix + substring match
+    from fooddb import FOODS
+    for name in FOODS:
+        if q in name.lower() and name not in seen:
+            seen.add(name)
+            results.append({"name": name.title(), "source": "local"})
+    # 2. Recent meals — most frequent first
+    recent = storage.recent_meals(20)
+    for m in recent:
+        name = m.get("item_name", "")
+        if q in name.lower() and name.lower() not in seen:
+            seen.add(name.lower())
+            results.append({
+                "name": name,
+                "calories": m.get("calories", 0),
+                "source": "recent",
+            })
+    return jsonify({"suggestions": results[:10]})
+
+
 @app.route("/api/relog", methods=["POST"])
 @login_required
 def relog():
@@ -375,6 +406,81 @@ def analytics():
 def analytics_weekly():
     """Weekly macro streak & target progress — 7-day breakdown."""
     return jsonify(storage.weekly_macro_analytics(7))
+
+
+@app.route("/api/suggest")
+@login_required
+def suggest():
+    """AI meal suggestions based on remaining macros for today."""
+    import goals as goals_mod
+    t = goals_mod.current_targets()
+    today = storage.today_data()
+    totals = today.get("totals", {})
+    cal_target = (t["calories"] if t else config.DAILY_CAL_TARGET) or 2000
+    prot_target = (t["protein"] if t else config.DAILY_PROTEIN_TARGET) or 150
+    carb_target = (t["carbs"] if t else 300) or 300
+    fat_target = (t["fat"] if t else 80) or 80
+
+    remaining = {
+        "calories": max(0, cal_target - totals.get("calories", 0)),
+        "protein": max(0, prot_target - totals.get("protein", 0)),
+        "carbs": max(0, carb_target - totals.get("carbs", 0)),
+        "fat": max(0, fat_target - totals.get("fat", 0)),
+    }
+
+    recent = storage.recent_meals_for_suggest(15)
+    recent_str = "\n".join(
+        f"- {m['item_name']}: {m['calories']}kcal, "
+        f"{m['protein_g']}p, {m['carbs_g']}c, {m['fat_g']}f"
+        for m in recent
+    )
+
+    prompt = (
+        f"The user has {remaining['calories']}kcal remaining today, "
+        f"with {remaining['protein']}g protein, {remaining['carbs']}g carbs, "
+        f"and {remaining['fat']}g fat left to hit their targets.\n\n"
+        f"Here are their most commonly logged meals:\n{recent_str}\n\n"
+        "Suggest 3 meals from this list that best fill their remaining macros. "
+        "Prioritize protein. Return JSON:\n"
+        '{"suggestions": [{"name": "...", "calories": N, "protein": N, '
+        '"carbs": N, "fat": N, "reason": "short reason"}]}'
+    )
+
+    try:
+        result = parser._generate([f"Remaining: {remaining}"], prompt)
+        suggestions = result.get("suggestions", [])
+    except Exception:
+        suggestions = []
+
+    return jsonify({"remaining": remaining, "suggestions": suggestions})
+
+
+@app.route("/api/barcode/<code>")
+@login_required
+def barcode_lookup(code):
+    """Look up a barcode via OpenFoodFacts API."""
+    url = f"https://world.openfoodfacts.org/api/v2/product/{code}.json"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Pulse/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode())
+        if data.get("status") != 1:
+            return jsonify({"found": False, "error": "Product not found"})
+        p = data["product"]
+        nutriments = p.get("nutriments", {})
+        return jsonify({
+            "found": True,
+            "name": p.get("product_name", "Unknown product"),
+            "brand": p.get("brands", ""),
+            "serving_size": p.get("serving_size", "1 serving"),
+            "calories": round(nutriments.get("energy-kcal_serving", 0) or nutriments.get("energy-kcal_100g", 0)),
+            "protein": round(nutriments.get("proteins_serving", 0) or nutriments.get("proteins_100g", 0), 1),
+            "carbs": round(nutriments.get("carbohydrates_serving", 0) or nutriments.get("carbohydrates_100g", 0), 1),
+            "fat": round(nutriments.get("fat_serving", 0) or nutriments.get("fat_100g", 0), 1),
+            "fiber": round(nutriments.get("fiber_serving", 0) or nutriments.get("fiber_100g", 0), 1),
+        })
+    except Exception as e:
+        return jsonify({"found": False, "error": str(e)})
 
 
 # ─────────────────────────────────────────────────────────────

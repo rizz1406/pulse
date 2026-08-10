@@ -504,3 +504,14 @@ def export_csv(kind):
     for r in rows:
         w.writerow([r[col] for col in columns[kind]])
     return out.getvalue()
+
+
+def recent_meals_for_suggest(limit=15):
+    """Distinct recent meals with nutrition for AI suggestion context."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT item_name, calories, protein_g, carbs_g, fat_g, "
+            "COUNT(*) freq FROM food "
+            "GROUP BY LOWER(item_name) ORDER BY freq DESC, MAX(id) DESC LIMIT ?",
+            (limit,)).fetchall()
+    return [dict(r) for r in rows]

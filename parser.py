@@ -27,6 +27,7 @@ _client = None
 
 # Groq model used for classification / clarification / chat.
 GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview"
 
 
 def _get_client():
@@ -130,12 +131,25 @@ class ParseError(Exception):
     """Friendly, user-facing AI failure (bad key, rate limit, network…)."""
 
 
+PHOTO_PROMPT = (
+    "This is a photo of food. Identify the dish and estimate the portion shown. "
+    "Return JSON: {\"type\": \"food\", \"item_name\": \"...\", \"quantity\": N, "
+    "\"unit\": \"...\", \"confidence_notes\": \"what you see in the image\"}. "
+    "Use the most specific dish name (e.g. 'masala omelette' not just 'omelette'). "
+    "Do NOT provide nutrition values — just identify what the food is."
+)
+
+
 def _generate(payload, prompt):
     """One Groq call returning parsed JSON dict."""
+    has_image = any(isinstance(p, dict) and "data" in p for p in payload)
+    model = GROQ_VISION_MODEL if has_image else GROQ_MODEL
+    if has_image:
+        prompt = PHOTO_PROMPT
     messages = [{"role": "user", "content": _to_parts(payload, prompt)}]
     try:
         response = _get_client().chat.completions.create(
-            model=GROQ_MODEL,
+            model=model,
             messages=messages,
             temperature=0.2,
             response_format={"type": "json_object"},
@@ -280,12 +294,15 @@ def parse(payload):
 
     For food: tries local DB / FatSecret first (zero API cost).
     Only calls Gemini for non-food or when local lookup fails.
+    Photos skip local DB — Groq vision identifies the food directly.
     """
     text_bits = " ".join(p for p in payload if isinstance(p, str))
     hint = portions.hint_for(text_bits)
     prompt = UNIFIED_PROMPT
     if hint:
         prompt = prompt + hint
+
+    has_image = any(isinstance(p, dict) and "data" in p for p in payload)
 
     # Fast path: try local food DB for plain text (no API call needed)
     text_only = all(isinstance(p, str) for p in payload)
@@ -296,11 +313,11 @@ def parse(payload):
 
     # Gemini path: classify input, extract structure
     d = _generate(payload, prompt)
-    kind = d.get("type", "chat")
+    kind = d.get("type", "food" if has_image else None) or d.get("type", "chat")
 
     if kind == "food":
         # Groq identified the food but didn't give nutrition (we told it not to).
-        # Try to look it up in the database using the identified food name.
+        # Try to look it up in the database using the identified name.
         food_name = d.get("item_name", "")
         audit = fooddb.parse_food(food_name) if food_name else None
 
@@ -309,6 +326,17 @@ def parse(payload):
         if not audit and food_name:
             # Try the original text with the Groq-identified name
             audit = fooddb.parse_food(text_bits)
+
+        # Photos: Groq already identified the food; skip local DB entirely.
+        # Show pills for user confirmation, with default_fallback = food name.
+        if has_image and food_name:
+            amb = _check_ambiguity(food_name, text_bits or f"[photo: {food_name}]")
+            if amb.get("pills"):
+                return _shape_food(d, allow_clarify=True, audit=None,
+                                   pills=amb["pills"],
+                                   default_fallback=food_name)
+            return _shape_food(d, allow_clarify=True, audit=None,
+                               default_fallback=food_name)
 
         # If no local match, check ambiguity for clarification pills
         if not audit and food_name:

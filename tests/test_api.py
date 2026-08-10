@@ -269,6 +269,153 @@ class TestAPI(unittest.TestCase):
             "weight_kg": 800})
         self.assertEqual(r.status_code, 400)
 
+    # ── /api/autocomplete ──
+    def test_autocomplete_empty_query(self):
+        r = self.client.get("/api/autocomplete?q=")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["suggestions"], [])
+
+    def test_autocomplete_local_db_match(self):
+        r = self.client.get("/api/autocomplete?q=egg")
+        self.assertEqual(r.status_code, 200)
+        suggestions = r.get_json()["suggestions"]
+        names = [s["name"].lower() for s in suggestions]
+        self.assertTrue(any("egg" in n for n in names))
+
+    def test_autocomplete_recent_meals_match(self):
+        # Log a meal first so it appears in recents
+        for _ in range(3):
+            self.client.post("/api/confirm", json={
+                "type": "food", "item_name": "Paneer Tikka",
+                "calories": 300, "protein_g": 22, "carbs_g": 8, "fat_g": 20})
+        r = self.client.get("/api/autocomplete?q=paneer")
+        suggestions = r.get_json()["suggestions"]
+        names = [s["name"] for s in suggestions]
+        self.assertIn("Paneer Tikka", names)
+        # Recent meals should include calorie info
+        paneer = next(s for s in suggestions if s["name"] == "Paneer Tikka")
+        self.assertEqual(paneer["calories"], 300)
+        self.assertEqual(paneer["source"], "recent")
+
+    def test_autocomplete_short_query(self):
+        r = self.client.get("/api/autocomplete?q=")
+        self.assertEqual(r.get_json()["suggestions"], [])
+
+    # ── /api/suggest ──
+    def test_suggest_returns_remaining_and_suggestions(self):
+        with mock.patch.object(parser, "_generate",
+                               return_value={"suggestions": [
+                                   {"name": "Eggs", "calories": 144,
+                                    "protein": 12, "carbs": 1, "fat": 10,
+                                    "reason": "high protein"}]}):
+            r = self.client.get("/api/suggest")
+        self.assertEqual(r.status_code, 200)
+        d = r.get_json()
+        self.assertIn("remaining", d)
+        self.assertIn("suggestions", d)
+        self.assertEqual(len(d["suggestions"]), 1)
+        self.assertEqual(d["suggestions"][0]["name"], "Eggs")
+
+    def test_suggest_fallback_on_error(self):
+        with mock.patch.object(parser, "_generate", side_effect=Exception("boom")):
+            r = self.client.get("/api/suggest")
+        self.assertEqual(r.status_code, 200)
+        d = r.get_json()
+        self.assertEqual(d["suggestions"], [])
+
+    def test_suggest_remaining_reflects_logged_food(self):
+        # Log food so remaining decreases
+        self.client.post("/api/confirm", json={
+            "type": "food", "item_name": "Rice", "calories": 200,
+            "protein_g": 4, "carbs_g": 45, "fat_g": 0.5})
+        with mock.patch.object(parser, "_generate",
+                               return_value={"suggestions": []}):
+            r = self.client.get("/api/suggest")
+        d = r.get_json()
+        # Remaining calories should be less than 2000
+        self.assertLess(d["remaining"]["calories"], 2000)
+
+    # ── /api/barcode ──
+    def test_barcode_not_found(self):
+        r = self.client.get("/api/barcode/0000000000000")
+        self.assertEqual(r.status_code, 200)
+        d = r.get_json()
+        self.assertFalse(d["found"])
+
+    def test_barcode_real_product(self):
+        """Test barcode lookup with mocked OpenFoodFacts response."""
+        import json as _json
+        fake_resp = _json.dumps({
+            "status": 1,
+            "product": {
+                "product_name": "Coca-Cola",
+                "brands": "Coca-Cola",
+                "serving_size": "330ml",
+                "nutriments": {
+                    "energy-kcal_serving": 139,
+                    "proteins_serving": 0,
+                    "carbohydrates_serving": 35,
+                    "fat_serving": 0,
+                    "fiber_serving": 0,
+                }
+            }
+        }).encode()
+
+        mock_resp = mock.Mock()
+        mock_resp.read.return_value = fake_resp
+        mock_resp.__enter__ = mock.Mock(return_value=mock_resp)
+        mock_resp.__exit__ = mock.Mock(return_value=False)
+
+        with mock.patch.object(app_mod.urllib.request, "urlopen",
+                               return_value=mock_resp):
+            r = self.client.get("/api/barcode/5449000000996")
+        self.assertEqual(r.status_code, 200)
+        d = r.get_json()
+        self.assertTrue(d["found"])
+        self.assertEqual(d["name"], "Coca-Cola")
+        self.assertEqual(d["calories"], 139)
+
+    def test_barcode_log_after_lookup(self):
+        """Simulate: lookup barcode → get info → log via /api/log."""
+        import json as _json
+        fake_resp = _json.dumps({
+            "status": 1,
+            "product": {
+                "product_name": "Test Chips",
+                "brands": "TestCo",
+                "serving_size": "1 pack (30g)",
+                "nutriments": {
+                    "energy-kcal_serving": 150,
+                    "proteins_serving": 2,
+                    "carbohydrates_serving": 18,
+                    "fat_serving": 8,
+                    "fiber_serving": 1,
+                }
+            }
+        }).encode()
+        mock_resp = mock.Mock()
+        mock_resp.read.return_value = fake_resp
+        mock_resp.__enter__ = mock.Mock(return_value=mock_resp)
+        mock_resp.__exit__ = mock.Mock(return_value=False)
+
+        with mock.patch.object(app_mod.urllib.request, "urlopen",
+                               return_value=mock_resp):
+            r = self.client.get("/api/barcode/123456789")
+            d = r.get_json()
+            self.assertTrue(d["found"])
+            self.assertEqual(d["name"], "Test Chips")
+            self.assertEqual(d["calories"], 150)
+
+    # ── weekly analytics endpoint ──
+    def test_weekly_analytics_endpoint(self):
+        r = self.client.get("/api/analytics/weekly")
+        self.assertEqual(r.status_code, 200)
+        d = r.get_json()
+        self.assertIn("streak", d)
+        self.assertIn("days_total", d)
+        self.assertIn("cal_adherence", d)
+        self.assertIn("protein_adherence", d)
+
 
 def goals_protein_at(w):
     import goals

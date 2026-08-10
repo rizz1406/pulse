@@ -417,5 +417,121 @@ class TestWeeklyAnalytics(unittest.TestCase):
         self.assertLessEqual(result["protein_adherence"], 150)
 
 
+class TestVisionModel(unittest.TestCase):
+    """Tests for vision model switching and photo food flow."""
+
+    def setUp(self):
+        storage.init_db()
+        portions.init_portion_table()
+        # Save the real _generate in case earlier tests left it mocked
+        self._orig_generate = parser._generate
+        parser._generate = _REAL_GENERATE
+
+    def tearDown(self):
+        parser._generate = self._orig_generate
+
+    def test_generate_uses_vision_model_for_image(self):
+        """_generate switches to GROQ_VISION_MODEL when image is in payload."""
+        image_payload = [
+            {"mime_type": "image/jpeg", "data": b"\x89PNG fake image data"},
+        ]
+        called_with = {}
+
+        def fake_create(**kwargs):
+            called_with["model"] = kwargs["model"]
+            msg = mock.Mock()
+            msg.content = '{"type": "food", "item_name": "test"}'
+            choice = mock.Mock()
+            choice.message = msg
+            resp = mock.Mock()
+            resp.choices = [choice]
+            return resp
+
+        mock_chat = mock.Mock()
+        mock_chat.completions.create = fake_create
+        mock_client = mock.Mock()
+        mock_client.chat = mock_chat
+
+        with mock.patch.object(parser, "_get_client", return_value=mock_client):
+            parser._generate(image_payload, "Identify this food")
+        self.assertEqual(called_with["model"], parser.GROQ_VISION_MODEL)
+
+    def test_generate_uses_text_model_for_text_only(self):
+        """_generate uses GROQ_MODEL for text-only payload."""
+        called_with = {}
+
+        def fake_create(**kwargs):
+            called_with["model"] = kwargs["model"]
+            msg = mock.Mock()
+            msg.content = '{"type": "food", "item_name": "test"}'
+            choice = mock.Mock()
+            choice.message = msg
+            resp = mock.Mock()
+            resp.choices = [choice]
+            return resp
+
+        mock_chat = mock.Mock()
+        mock_chat.completions.create = fake_create
+        mock_client = mock.Mock()
+        mock_client.chat = mock_chat
+
+        with mock.patch.object(parser, "_get_client", return_value=mock_client):
+            parser._generate(["2 eggs"], "Parse this")
+        self.assertEqual(called_with["model"], parser.GROQ_MODEL)
+
+    def test_photo_flow_returns_food_with_pills(self):
+        """Photo payload → Groq identifies food → pills returned."""
+        image_payload = [
+            {"mime_type": "image/jpeg", "data": b"\x89PNG fake image data"},
+        ]
+        with mock.patch.object(parser, "_generate") as mock_gen, \
+             mock.patch.object(parser, "_check_ambiguity") as mock_amb:
+            mock_gen.return_value = {
+                "type": "food",
+                "item_name": "Masala Omelette",
+                "quantity": 1,
+                "unit": "plate",
+                "confidence_notes": "looks like 2-egg omelette with veggies",
+            }
+            mock_amb.return_value = {
+                "requires_clarification": True,
+                "pills": [
+                    {"label": "2-egg omelette", "text": "2 egg omelette"},
+                    {"label": "3-egg omelette", "text": "3 egg omelette"},
+                ],
+                "default_fallback": "Masala Omelette",
+            }
+            result = parser.parse(image_payload)
+        self.assertEqual(result["type"], "food")
+        self.assertTrue(result.get("needs_clarification"))
+        self.assertEqual(len(result["pills"]), 2)
+
+    def test_photo_flow_skips_text_local_db(self):
+        """Photo payload: Groq identifies food, ambiguity check runs but text-only local DB is skipped."""
+        image_payload = [
+            {"mime_type": "image/jpeg", "data": b"\x89PNG fake image data"},
+        ]
+        with mock.patch.object(parser, "_generate") as mock_gen, \
+             mock.patch.object(parser, "_check_ambiguity") as mock_amb:
+            mock_gen.return_value = {
+                "type": "food",
+                "item_name": "Chicken Biryani",
+                "quantity": 1,
+                "unit": "plate",
+            }
+            mock_amb.return_value = {
+                "requires_clarification": False,
+                "pills": [],
+                "default_fallback": "Chicken Biryani",
+            }
+            result = parser.parse(image_payload)
+        # _generate should be called (Groq identifies the food)
+        mock_gen.assert_called_once()
+        # ambiguity check should be called (for confirmation pills)
+        mock_amb.assert_called_once()
+        self.assertEqual(result["type"], "food")
+        self.assertEqual(result["item_name"], "Chicken Biryani")
+
+
 if __name__ == "__main__":
     unittest.main()

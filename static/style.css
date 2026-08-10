@@ -331,3 +331,40 @@ h2.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:va
   padding:10px 16px;border-radius:14px;font-size:13px;cursor:pointer;
   font-family:'Inter';width:100%;transition:all .15s}
 .clarify-default:active{border-color:var(--accent);color:var(--accent)}
+
+/* ---- Autocomplete ---- */
+.input-box{position:relative}
+.autocomplete{position:absolute;bottom:100%;left:0;right:0;max-height:240px;overflow-y:auto;
+  background:rgba(22,30,22,0.97);backdrop-filter:blur(16px);border:1px solid var(--line);
+  border-radius:14px;margin-bottom:6px;display:none;z-index:20;
+  box-shadow:0 -8px 32px rgba(0,0,0,0.5)}
+.autocomplete.show{display:block}
+.ac-item{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;
+  cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);transition:background .1s}
+.ac-item:last-child{border-bottom:none}
+.ac-item:active{background:rgba(196,255,77,0.08)}
+.ac-name{font-size:14px;color:var(--ink)}
+.ac-cal{font-size:12px;color:var(--muted);font-weight:500}
+.ac-src{font-size:11px;color:var(--accent-dim);text-transform:uppercase;letter-spacing:.5px}
+
+/* ---- AI Suggestions ---- */
+.suggest-card{margin:12px 0;padding:16px;background:var(--panel);border-radius:16px;border:1px solid var(--line)}
+.suggest-header{font-size:15px;font-weight:600;color:var(--accent);margin-bottom:12px}
+.suggest-item{padding:12px 0;border-bottom:1px solid var(--line)}
+.suggest-item:last-child{border-bottom:none}
+.suggest-name{font-weight:600;font-size:15px;color:var(--ink)}
+.suggest-macros{font-size:12px;color:var(--muted);margin:4px 0 2px}
+.suggest-reason{font-size:12px;color:var(--accent-dim);font-style:italic;margin-bottom:6px}
+.suggest-log{background:rgba(196,255,77,0.1);border:1px solid var(--accent-dim);color:var(--accent);
+  border-radius:10px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;transition:.15s}
+.suggest-log:active{background:rgba(196,255,77,0.25)}
+.suggest-refresh{display:block;width:100%;margin-top:10px;background:none;border:1px solid var(--line);
+  color:var(--muted);border-radius:10px;padding:8px;font-size:12px;cursor:pointer;transition:.15s}
+.suggest-refresh:active{border-color:var(--accent);color:var(--accent)}
+
+/* ---- Barcode Scanner ---- */
+.barcode-sheet{padding:20px;max-height:90vh;overflow-y:auto}
+.barcode-info{padding:8px 0}
+.barcode-name{font-size:16px;font-weight:600;color:var(--ink)}
+.barcode-serving{font-size:12px;color:var(--muted);margin:4px 0}
+.barcode-macros{font-size:13px;color:var(--accent-dim);margin-bottom:8px}

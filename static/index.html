@@ -4,11 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#0a0e0a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Pulse">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <title>Pulse — Health Tracker</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -104,6 +110,12 @@
     </div>
     <h2 class="eyebrow">Today's log</h2>
     <div id="todayList"></div>
+    <!-- AI Suggestions -->
+    <div class="suggest-card" id="suggestCard" style="display:none">
+      <div class="suggest-header">💡 What to eat next</div>
+      <div class="suggest-list" id="suggestList"></div>
+      <button class="suggest-refresh" onclick="loadSuggestions()">Refresh</button>
+    </div>
   </div>
 
   <!-- PROGRESS -->
@@ -146,8 +158,10 @@
 <div class="dock" id="dock" style="display:none">
   <div class="dock-inner">
     <button class="icon-btn" id="camBtn" onclick="document.getElementById('camInput').click()">📷</button>
+    <button class="icon-btn" id="barcodeBtn" onclick="startBarcode()">⊞</button>
     <div class="input-box">
       <textarea id="msg" rows="1" placeholder="What did you eat or lift?"></textarea>
+      <div class="autocomplete" id="autocomplete"></div>
       <button class="icon-btn" id="micBtn" onclick="toggleMic()">🎙</button>
     </div>
     <button class="icon-btn send-btn" id="sendBtn" onclick="sendText()">➤</button>
@@ -165,6 +179,18 @@
 <!-- EDIT SHEET -->
 <div class="overlay" id="editOverlay">
   <div class="sheet" id="editSheet"></div>
+</div>
+
+<!-- BARCODE SCANNER -->
+<div class="overlay" id="barcodeOverlay">
+  <div class="sheet barcode-sheet">
+    <div class="ph">Scan a barcode</div>
+    <div id="barcodeReader" style="width:100%;border-radius:12px;overflow:hidden"></div>
+    <div id="barcodeResult" style="margin-top:12px"></div>
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="stopBarcode()">Close</button>
+    </div>
+  </div>
 </div>
 
 <!-- GOAL SHEET -->

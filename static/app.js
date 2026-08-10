@@ -87,8 +87,39 @@ async function loadProgress(){
 
 /* ---------- INPUT ---------- */
 const ta=document.getElementById('msg');
-ta.addEventListener('input',()=>{ta.style.height='auto';ta.style.height=Math.min(ta.scrollHeight,100)+'px';});
-ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendText();}});
+ta.addEventListener('input',()=>{ta.style.height='auto';ta.style.height=Math.min(ta.scrollHeight,100)+'px';checkAutocomplete();});
+ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendText();}if(e.key==='Escape')hideAutocomplete();});
+let _acTimer=null;
+async function checkAutocomplete(){
+  clearTimeout(_acTimer);
+  const q=ta.value.trim();
+  if(q.length<1){hideAutocomplete();return;}
+  _acTimer=setTimeout(async()=>{
+    try{
+      const r=await fetch('/api/autocomplete?q='+encodeURIComponent(q));
+      const d=await r.json();
+      if(!d.suggestions||!d.suggestions.length){hideAutocomplete();return;}
+      const el=document.getElementById('autocomplete');
+      el.innerHTML=d.suggestions.map(s=>
+        `<div class="ac-item" onclick="selectAC('${esc(s.name)}')">
+          <span class="ac-name">${esc(s.name)}</span>
+          ${s.calories?`<span class="ac-cal">${s.calories} kcal</span>`:'<span class="ac-src">database</span>'}
+        </div>`
+      ).join('');
+      el.classList.add('show');
+    }catch(e){}
+  },200);
+}
+function selectAC(name){
+  ta.value=name; hideAutocomplete(); sendText();
+}
+function hideAutocomplete(){
+  const el=document.getElementById('autocomplete');
+  if(el){el.innerHTML='';el.classList.remove('show');}
+}
+document.addEventListener('click',e=>{
+  if(!e.target.closest('.input-box')&&!e.target.closest('#autocomplete'))hideAutocomplete();
+});
 
 async function sendText(){
   const text=ta.value.trim(); if(!text) return;
@@ -333,6 +364,34 @@ async function refreshToday(){
   const d=await getJSON('/api/today');
   if(d) renderToday(d);
   loadWeeklyStreak();
+  loadSuggestions();
+}
+
+async function loadSuggestions(){
+  const card=document.getElementById('suggestCard');
+  const list=document.getElementById('suggestList');
+  try{
+    const r=await fetch('/api/suggest');
+    const d=await r.json();
+    if(!d.suggestions||!d.suggestions.length){card.style.display='none';return;}
+    list.innerHTML=d.suggestions.map(s=>`
+      <div class="suggest-item">
+        <div class="suggest-name">${esc(s.name)}</div>
+        <div class="suggest-macros">${s.calories}kcal · ${s.protein}p · ${s.carbs}c · ${s.fat}f</div>
+        <div class="suggest-reason">${esc(s.reason||'')}</div>
+        <button class="suggest-log" onclick="quickLog('${esc(s.name)}',${s.calories},${s.protein},${s.carbs},${s.fat})">Log this</button>
+      </div>
+    `).join('');
+    card.style.display='block';
+  }catch(e){card.style.display='none';}
+}
+
+async function quickLog(name,cal,p,c,f){
+  try{
+    await fetch('/api/log',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:name,skip_clarification:true})});
+    refreshToday(); toast('Logged '+name);
+  }catch(e){toast('Failed to log');}
 }
 function renderToday(d){
   const prevStreak = window._lastStreak || 0;
@@ -665,3 +724,44 @@ document.getElementById('editOverlay').addEventListener('click',e=>{if(e.target.
 document.getElementById('goalOverlay').addEventListener('click',e=>{if(e.target.id==='goalOverlay')closeGoal();});
 
 checkAuth();
+
+/* ---------- BARCODE SCANNER ---------- */
+let _barcodeScanner=null;
+function startBarcode(){
+  document.getElementById('barcodeOverlay').classList.add('open');
+  document.getElementById('barcodeResult').innerHTML='';
+  _barcodeScanner=new Html5QrcodeScanner("barcodeReader",{fps:10,qrbox:{width:280,height:120}});
+  _barcodeScanner.render((code)=>{lookupBarcode(code);});
+}
+function stopBarcode(){
+  document.getElementById('barcodeOverlay').classList.remove('open');
+  if(_barcodeScanner){_barcodeScanner.clear().catch(()=>{});_barcodeScanner=null;}
+  document.getElementById('barcodeReader').innerHTML='';
+}
+async function lookupBarcode(code){
+  if(_barcodeScanner){_barcodeScanner.clear().catch(()=>{});}
+  const res=document.getElementById('barcodeResult');
+  res.innerHTML='<div style="color:var(--muted);font-size:13px">Looking up '+esc(code)+'...</div>';
+  try{
+    const r=await fetch('/api/barcode/'+code);
+    const d=await r.json();
+    if(!d.found){res.innerHTML='<div style="color:var(--danger);font-size:13px">'+esc(d.error||'Not found')+'</div>';return;}
+    res.innerHTML=`
+      <div class="barcode-info">
+        <div class="barcode-name">${esc(d.name)}${d.brand?' <span style="color:var(--muted)">('+esc(d.brand)+')</span>':''}</div>
+        <div class="barcode-serving">${esc(d.serving_size)}</div>
+        <div class="barcode-macros">${d.calories}kcal · ${d.protein}p · ${d.carbs}c · ${d.fat}f</div>
+        <button class="suggest-log" onclick="logBarcode('${esc(d.name)}',${d.calories},${d.protein},${d.carbs},${d.fat})">Log this</button>
+      </div>`;
+  }catch(e){res.innerHTML='<div style="color:var(--danger);font-size:13px">Lookup failed</div>';}
+}
+async function logBarcode(name,cal,p,c,f){
+  try{
+    await fetch('/api/log',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:name,skip_clarification:true})});
+    stopBarcode(); refreshToday(); toast('Logged '+name);
+  }catch(e){toast('Failed to log');}
+}
+
+/* ---------- PWA ---------- */
+if('serviceWorker' in navigator){ navigator.serviceWorker.register('/sw.js').catch(()=>{}); }
