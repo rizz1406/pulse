@@ -105,7 +105,7 @@ async function sendPayload(opts){
       res=await fetch('/api/log',{method:'POST',body:opts.form});
     }
     const d=await res.json();
-    if(r.status===401){ showLogin(); return; }
+    if(res.status===401){ showLogin(); return; }
     if(!res.ok){ toast(d.error||'Something went wrong'); return; }
     handleResult(d);
   }catch(e){ toast('Network error'); }
