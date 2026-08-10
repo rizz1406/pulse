@@ -449,6 +449,25 @@ class TestFatSecret(unittest.TestCase):
             cfg.FATSECRET_CLIENT_ID = "test"
             self.assertIsNone(fooddb.parse_fatsecret("big mac"))
 
+    def test_extract_qty_pieces(self):
+        """'10 pieces pani puri' → qty=10, raw_unit='piece'."""
+        qty, unit_key, cleaned, gram_mode, raw_unit = fooddb._extract_qty("10 pieces pani puri")
+        self.assertEqual(qty, 10)
+        self.assertEqual(raw_unit, "piece")
+        self.assertIn("pani puri", cleaned)
+
+    def test_extract_qty_simple(self):
+        """'2 eggs' → qty=2, raw_unit='egg'."""
+        qty, unit_key, cleaned, gram_mode, raw_unit = fooddb._extract_qty("2 eggs")
+        self.assertEqual(qty, 2)
+        self.assertEqual(raw_unit, "egg")
+
+    def test_extract_qty_grams(self):
+        """'200g chicken' → gram_mode=True, qty=2.0."""
+        qty, unit_key, cleaned, gram_mode, raw_unit = fooddb._extract_qty("200g chicken")
+        self.assertTrue(gram_mode)
+        self.assertAlmostEqual(qty, 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()

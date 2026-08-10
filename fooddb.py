@@ -880,13 +880,15 @@ def parse_fatsecret(text):
             parsed["cal_per100g"], parsed["p_per100g"],
             parsed["c_per100g"], parsed["f_per100g"],
             serving_g, qty, gram_mode)
-    elif raw_unit and raw_unit == parsed["orig_unit"] \
-            and parsed["orig_amount"] == 1 and per["cal"] > 0:
+    elif raw_unit and raw_unit == parsed["orig_unit"] and per["cal"] > 0:
+        # User's unit matches FatSecret's unit (e.g. "10 pieces" + "Per 5 pieces").
+        # Scale: multiplier = qty / orig_amount (e.g. 10/5 = 2x).
+        multiplier = qty / parsed["orig_amount"] if parsed["orig_amount"] else qty
         serving_g = parsed["ref_amount"] if parsed["orig_unit"] == "cup" else 100
-        cal = round(per["cal"] * qty)
-        p = round(per["p"] * qty)
-        c = round(per["c"] * qty)
-        f = round(per["f"] * qty)
+        cal = round(per["cal"] * multiplier)
+        p = round(per["p"] * multiplier)
+        c = round(per["c"] * multiplier)
+        f = round(per["f"] * multiplier)
     elif parsed["real_serving_g"]:
         serving_g = parsed["real_serving_g"]
         cal, p, c, f = _calc_nutrition(
