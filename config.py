@@ -23,7 +23,8 @@ GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")
 # ── Vision (photos) — Gemini free tier. Groq has no vision model. ──
 # Get a free key at https://aistudio.google.com/apikey
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
+# Accepts GEMINI_VISION_MODEL or legacy GEMINI_MODEL env var.
+GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL") or os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
 # ── Simple passcode so only you can use the app ──────────────
 # Set a value you'll remember in .env. Leave "" to disable the lock (not recommended when hosted).
 APP_PASSCODE = os.getenv("APP_PASSCODE", "")
