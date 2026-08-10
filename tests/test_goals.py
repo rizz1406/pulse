@@ -70,6 +70,13 @@ class TestGoals(unittest.TestCase):
             n = c.execute("SELECT COUNT(*) n FROM weight").fetchone()["n"]
         self.assertEqual(n, 1)
 
+    def test_bmi(self):
+        self.assertEqual(goals.bmi(80, 180), 24.7)  # 80 / 1.8² = 24.69…
+        self.assertEqual(goals.bmi(50, 160), 19.5)
+        self.assertIsNone(goals.bmi(None, 180))
+        self.assertIsNone(goals.bmi(80, None))
+        self.assertIsNone(goals.bmi(80, 0))
+
 
 if __name__ == "__main__":
     unittest.main()

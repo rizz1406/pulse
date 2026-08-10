@@ -77,6 +77,18 @@ def latest_weight():
     return r["weight_kg"] if r else None
 
 
+def bmi(weight_kg, height_cm):
+    """Body Mass Index, or None when either input is missing/invalid."""
+    try:
+        w = float(weight_kg)
+        h = float(height_cm)
+    except (TypeError, ValueError):
+        return None
+    if not w or not h:
+        return None
+    return round(w / ((h / 100.0) ** 2), 1)
+
+
 def save_goal(height_cm, age, sex, activity, objective, current_weight):
     with _conn() as c:
         c.execute(

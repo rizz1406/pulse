@@ -431,6 +431,39 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(d["source"], "ai_estimate")
         self.assertEqual(d["calories"], 290)
 
+    # ── weekly AI recap ──
+    def test_recap_returns_none_when_no_data(self):
+        r = self.client.get("/api/recap")
+        self.assertEqual(r.status_code, 200)
+        self.assertIsNone(r.get_json()["recap"])
+
+    def test_recap_uses_groq_when_data_exists(self):
+        from unittest import mock as _mock
+        from flask import Flask
+        import app as app_mod
+        self.client.post("/api/confirm", json={
+            "type": "food", "item_name": "Rice", "calories": 300,
+            "protein_g": 6, "carbs_g": 60, "fat_g": 1})
+        fake_client = _mock.Mock()
+        fake_client.chat.completions.create.return_value.choices = [
+            _mock.Mock(message=_mock.Mock(content="Nice consistency this week!"))]
+        with _mock.patch.object(app_mod.parser, "_get_client",
+                                return_value=fake_client):
+            r = self.client.get("/api/recap")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["recap"], "Nice consistency this week!")
+
+    def test_recap_fallback_none_on_groq_error(self):
+        from unittest import mock as _mock
+        import app as app_mod
+        fake_client = _mock.Mock()
+        fake_client.chat.completions.create.side_effect = Exception("boom")
+        with _mock.patch.object(app_mod.parser, "_get_client",
+                                return_value=fake_client):
+            r = self.client.get("/api/recap")
+        self.assertEqual(r.status_code, 200)
+        self.assertIsNone(r.get_json()["recap"])
+
 
 
 

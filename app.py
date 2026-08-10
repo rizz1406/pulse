@@ -204,7 +204,10 @@ def confirm():
         kg = d.get("weight_kg")
         if not isinstance(kg, (int, float)) or not (0 < float(kg) < 500):
             return jsonify({"error": "invalid weight_kg"}), 400
-        storage.save_weight(float(kg), d.get("notes", ""))
+        photo = d.get("photo", "")
+        if photo and len(photo) > 3 * 1024 * 1024:
+            return jsonify({"error": "Photo too large — max 3MB"}), 413
+        storage.save_weight(float(kg), d.get("notes", ""), photo)
     elif t == "water":
         try:
             ml = max(0, min(int(d.get("ml", 250)), 5000))
@@ -290,6 +293,8 @@ def progress():
     if t:
         data["target_cal"] = t["calories"]
         data["objective"] = t.get("objective")
+    g = goals.get_goal()
+    data["bmi"] = goals.bmi(data.get("current"), g.get("height_cm") if g else None)
     return jsonify(data)
 
 
@@ -385,6 +390,37 @@ def water():
 def weekly():
     days = _days_arg(7)
     return jsonify(storage.weekly_summary(days))
+
+
+@app.route("/api/recap")
+@login_required
+def recap():
+    """AI summary of the last 7 days: habits, wins, and one actionable tip."""
+    s = storage.weekly_summary(7)
+    if not s["active_days"]:
+        return jsonify({"recap": None})
+    prompt = (
+        "You are a concise nutrition coach. Summarize this user's last 7 days "
+        "in 3-4 short lines, all plain text (no markdown, no emojis). "
+        "Data: avg_cal={avg_cal}, total_cal={total_cal}, active_days={active_days}, "
+        "workouts={workouts}, water_ml={water_ml}, weight_change={weight_change}, "
+        "top_meals={top_meals}. "
+        "Cover: one thing going well, one thing to watch, and one specific "
+        "actionable tip for next week. Keep it friendly and specific."
+    ).format(**s)
+    try:
+        resp = parser._get_client().chat.completions.create(
+            model=parser.GROQ_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.4,
+            max_tokens=180,
+        )
+        if not resp.choices:
+            return jsonify({"recap": None})
+        recap_text = (resp.choices[0].message.content or "").strip()
+        return jsonify({"recap": recap_text or None})
+    except Exception:
+        return jsonify({"recap": None})
 
 
 @app.route("/api/export")

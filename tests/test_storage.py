@@ -51,6 +51,14 @@ class TestStorage(unittest.TestCase):
         t = storage.weight_trend(60)
         self.assertEqual(t["current"], 77.5)
 
+    def test_progress_photos(self):
+        storage.save_weight(77.5, "weigh-in", "data:image/jpeg;base64,AAAA")
+        storage.save_weight(76.9, "weigh-in")
+        t = storage.weight_trend(60)
+        self.assertEqual(len(t["photos"]), 1)
+        self.assertEqual(t["photos"][0]["weight_kg"], 77.5)
+        self.assertEqual(t["photos"][0]["photo"], "data:image/jpeg;base64,AAAA")
+
     def test_edit_and_delete(self):
         eid = storage.save_food({"item_name": "Rice", "calories": 200,
                                  "protein_g": 4, "carbs_g": 44, "fat_g": 1})

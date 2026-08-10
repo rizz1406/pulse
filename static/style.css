@@ -5,6 +5,24 @@
   --protein:#c4ff4d; --carbs:#4dd8ff; --fat:#ffb04d; --danger:#ff6b6b;
   --radius:24px; --glass-blur:22px;
 }
+html[data-theme="light"]{
+  --bg:#f2f5f0; --panel:rgba(255,255,255,0.72); --panel-2:rgba(255,255,255,0.6);
+  --line:rgba(0,0,0,0.08); --line-bright:rgba(0,0,0,0.14);
+  --ink:#17201a; --muted:#5d6f5e; --accent:#5e9c14; --accent-dim:#4c7e10;
+  --protein:#5e9c14; --carbs:#0e7fa8; --fat:#c96a08; --danger:#d64545;
+}
+/* Light-theme remaps for hardcoded translucent-white surfaces */
+html[data-theme="light"] .macro-row .track,
+html[data-theme="light"] .water-track,
+html[data-theme="light"] .wkstreak-track,
+html[data-theme="light"] #login input,
+html[data-theme="light"] .dock .input-box,
+html[data-theme="light"] .btn-cancel{
+  background:rgba(0,0,0,0.06);
+}
+html[data-theme="light"] #login input{background:rgba(0,0,0,0.05)}
+html[data-theme="light"] .sheet{box-shadow:0 -12px 48px rgba(0,0,0,0.2)}
+html[data-theme="light"] .glass{box-shadow:0 8px 32px rgba(0,0,0,0.12),inset 0 1px 0 rgba(255,255,255,0.6)}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{background:var(--bg)}
 body{color:var(--ink);font-family:'Inter',sans-serif;
@@ -115,11 +133,11 @@ header{padding:24px 0 8px;display:flex;align-items:center;justify-content:space-
   box-shadow:0 0 10px rgba(77,216,255,.5);transition:width .7s cubic-bezier(.2,.9,.2,1)}
 .water-btns{display:flex;flex-direction:column;gap:7px}
 .water-btn{background:rgba(77,216,255,0.1);border:1px solid rgba(77,216,255,0.3);color:#bfeaff;
-  padding:9px 13px;border-radius:11px;font-size:12px;font-weight:700;cursor:pointer;
-  font-family:'Inter';transition:all .15s;white-space:nowrap}
+  padding:13px 13px;border-radius:11px;font-size:13px;font-weight:700;cursor:pointer;
+  font-family:'Inter';transition:all .15s;white-space:nowrap;min-height:44px}
 .water-btn:active{transform:scale(.94);background:rgba(77,216,255,.2)}
 .water-undo{background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;
-  text-decoration:underline;padding:6px 0 0}
+  text-decoration:underline;padding:10px 0 0;min-height:32px}
 
 /* ---- Input dock ---- */
 .dock{position:fixed;bottom:0;left:0;right:0;
@@ -169,7 +187,8 @@ h2.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:va
 .entry .s{font-size:12px;color:var(--muted);margin-top:2px}
 .entry .time{font-size:11px;color:var(--muted)}
 .entry .del{color:var(--muted);cursor:pointer;font-size:16px;padding:4px}
-.empty{text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;line-height:1.6}
+.empty{text-align:center;color:var(--muted);padding:40px 20px;font-size:14px;line-height:1.7;
+  background:var(--panel);border:1px dashed var(--line-bright);border-radius:var(--radius);margin:10px 0}
 
 /* ---- Cards / charts ---- */
 .card{border-radius:var(--radius);padding:20px;margin-bottom:14px;overflow:hidden;
@@ -297,12 +316,23 @@ h2.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:va
 .prog-hero{text-align:center}
 .prog-hero .cur{font-family:'Space Grotesk';font-size:44px;font-weight:700;color:var(--accent)}
 .prog-hero .cur small{font-size:18px;color:var(--muted)}
+.prog-hero .bmi-tag{display:inline-block;margin-left:10px;font-size:13px;font-weight:600;vertical-align:middle;padding:3px 10px;border-radius:20px;background:var(--panel);color:var(--accent);border:1px solid var(--line-bright)}
 .prog-hero .sub{color:var(--muted);font-size:13px;margin-top:4px}
 .prog-hero .lost{margin-top:10px;font-size:14px}
 .prog-hero .lost b{color:var(--accent)}
 .pace-line{font-size:15px;line-height:1.6}
 .pace-good{color:var(--accent)} .pace-warn{color:var(--fat)}
 .pace-note{color:var(--muted);font-size:13px;margin-top:10px;line-height:1.5}
+/* Progress photos */
+.photo-scroll{display:flex;gap:10px;overflow-x:auto;padding:2px 2px 6px;-webkit-overflow-scrolling:touch}
+.photo-scroll img{width:92px;height:120px;object-fit:cover;border-radius:14px;cursor:pointer;flex-shrink:0;border:1px solid var(--line-bright)}
+.prog-photo-preview{position:relative;margin:10px 0}
+.prog-photo-preview img{width:100%;border-radius:14px;object-fit:cover;max-height:240px;border:1px solid var(--line-bright)}
+.prog-photo-preview .del{position:absolute;top:8px;right:8px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,0.7);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer}
+/* Weekly AI recap */
+.recap-header{font-family:'Space Grotesk';font-weight:600;font-size:14px;margin-bottom:8px;color:var(--accent)}
+.recap-body{font-size:14px;line-height:1.6;color:var(--ink);white-space:pre-line}
+.recap-refresh{margin-top:10px;background:none;border:1px solid var(--line-bright);color:var(--muted);font-size:12px;padding:6px 12px;border-radius:10px;cursor:pointer;font-family:'Inter'}
 
 /* ---- Weekly Streak Card ---- */
 .weekly-streak-card{padding:16px !important}

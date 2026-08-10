@@ -1,5 +1,22 @@
 let pending=null, charts={};
 
+/* ---------- THEME ---------- */
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  try{ localStorage.setItem('pulse-theme', t); }catch(e){}
+  const btn=document.querySelector('[title="Toggle theme"]');
+  if(btn) btn.textContent = t==='light' ? '🌙' : '🌓';
+}
+function toggleTheme(){
+  const cur=document.documentElement.getAttribute('data-theme')==='light'?'dark':'light';
+  applyTheme(cur);
+}
+(function(){
+  let t='dark';
+  try{ t=localStorage.getItem('pulse-theme')||'dark'; }catch(e){}
+  applyTheme(t);
+})();
+
 /* ---------- AUTH ---------- */
 async function checkAuth(){
   const r=await fetch('/api/me'); const d=await r.json();
@@ -68,11 +85,13 @@ async function loadProgress(){
   if(!d.current){
     hero.innerHTML='<div class="empty" style="padding:20px">Log your weight to start tracking progress.<br>Just type "I weigh 77kg" below.</div>';
     document.getElementById('paceBox').innerHTML='';
+    document.getElementById('photoStrip').innerHTML='';
     if(charts['weightTrend'])charts['weightTrend'].destroy();
     return;
   }
   const lost=d.start!=null?(d.start-d.current).toFixed(1):0;
-  hero.innerHTML=`<div class="cur">${d.current}<small>kg</small></div>
+  const bmiTag = d.bmi!=null ? `<span class="bmi-tag">BMI ${d.bmi}</span>` : '';
+  hero.innerHTML=`<div class="cur">${d.current}<small>kg</small>${bmiTag}</div>
     <div class="sub">avg intake ${d.avg_cal} kcal/day${d.target_cal?` · target ${d.target_cal}`:''}</div>
     ${d.start!=null?`<div class="lost">${lost>0?'Down':'Up'} <b>${Math.abs(lost)}kg</b> from ${d.start}kg</div>`:''}`;
   // weight chart
@@ -95,6 +114,30 @@ async function loadProgress(){
     pace.innerHTML=`<div class="pace-line ${cls}">${msg}</div>
       <div class="pace-note">Based on your weight trend over the period. Weigh in 1–2× a week, same time of day, for the cleanest signal.</div>`;
   }
+  // progress photos
+  const strip=document.getElementById('photoStrip');
+  if(d.photos && d.photos.length){
+    strip.innerHTML=`<h3 style="font-family:'Space Grotesk';font-size:15px;margin:4px 0 10px">Progress photos <span class="hint">attach on the next weigh-in</span></h3>
+      <div class="photo-scroll">${d.photos.map((p,i)=>`<img src="${p.photo}" alt="${p.weight_kg}kg ${p.day}" onclick="openPhotoStrip(${i})">`).join('')}</div>`;
+    window._photos=d.photos;
+    strip.style.display='block';
+  } else {
+    strip.style.display='none';
+  }
+}
+let _photoView=null;
+function openPhotoStrip(i){
+  const p=(window._photos||[])[i]; if(!p) return;
+  const old=document.getElementById('photoView'); if(old) old.remove();
+  const v=document.createElement('div');
+  v.id='photoView';
+  v.style.cssText='position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:20px';
+  v.innerHTML=`<img src="${p.photo}" style="max-width:100%;max-height:78vh;border-radius:16px;object-fit:contain">
+    <div style="color:#eee;font-size:14px">${p.weight_kg} kg · ${p.day}</div>
+    <button class="btn-cancel" onclick="document.getElementById('photoView').remove()" style="min-height:44px;padding:10px 26px">Close</button>`;
+  v.onclick=e=>{ if(e.target===v) v.remove(); };
+  document.body.appendChild(v);
+  _photoView=v;
 }
 
 /* ---------- INPUT ---------- */
@@ -164,6 +207,34 @@ async function onPhoto(input){
   await sendPayload({form});
 }
 
+/* Progress photo — attach to the pending weight entry as a data URI. */
+function onProgPhoto(input){
+  const file=input.files[0]; if(!file) return;
+  input.value='';
+  if(!file.type.startsWith('image/')){ toast('Pick an image'); return; }
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const uri=e.target.result;
+    if(uri.length>3*1024*1024){ toast('Photo too large — max 3MB'); return; }
+    if(pending && pending.type==='weight'){
+      pending._photo=uri;
+      const s=document.getElementById('sheet');
+      s.innerHTML=s.innerHTML.replace(
+        `<button class="btn-cancel" onclick="document.getElementById('progPhotoInput').click()">📷 Photo</button>`,
+        `<div class="prog-photo-preview"><img src="${uri}" alt="progress"><div class="del" onclick="clearWeightPhoto()">✕</div></div>
+         <button class="btn-cancel" onclick="document.getElementById('progPhotoInput').click()">📷 Photo</button>`);
+    }
+  };
+  reader.readAsDataURL(file);
+}
+function clearWeightPhoto(){
+  if(pending && pending.type==='weight'){
+    delete pending._photo;
+    const s=document.getElementById('sheet');
+    const p=s.querySelector('.prog-photo-preview'); if(p) p.remove();
+  }
+}
+
 /* ---------- RESULT / PREVIEW ---------- */
 function handleResult(d){
   if(d.type==='chat'){ showChat(d.reply); return; }
@@ -202,10 +273,13 @@ function handleResult(d){
         <button class="btn-cancel" onclick="closeSheet()">Cancel</button>
         <button class="btn-save" onclick="confirmEntry()">Log it</button></div>`;
   } else if(d.type==='weight'){
+    const pn = d._photo || '';
     s.innerHTML=`<div class="ph">⚖ Body weight</div>
       <div class="kcal">${d.weight_kg} kg</div>
       ${d.notes?`<div class="note">${esc(d.notes)}</div>`:''}
+      ${pn?`<div class="prog-photo-preview"><img src="${pn}" alt="progress"><div class="del" onclick="clearWeightPhoto()">✕</div></div>`:''}
       <div class="sheet-actions">
+        <button class="btn-cancel" onclick="document.getElementById('progPhotoInput').click()">📷 Photo</button>
         <button class="btn-cancel" onclick="closeSheet()">Cancel</button>
         <button class="btn-save" onclick="confirmEntry()">Log it</button></div>`;
   } else if(d.type==='water'){
@@ -316,7 +390,12 @@ function showChat(reply){
 function closeSheet(){ document.getElementById('overlay').classList.remove('show'); pending=null; }
 async function confirmEntry(){
   if(!pending) return closeSheet();
-  const r=await fetch('/api/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pending)});
+  const body=JSON.parse(JSON.stringify(pending));
+  if(body.type==='weight' && body._photo){
+    body.photo=body._photo;
+    delete body._photo;
+  }
+  const r=await fetch('/api/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d=await r.json();
   const wasWeight = pending && pending.type==='weight';
   const wasWater = pending && pending.type==='water';
@@ -354,6 +433,7 @@ async function refreshToday(){
   const d=await getJSON('/api/today');
   if(d) renderToday(d);
   loadWeeklyStreak(); // fire-and-forget, doesn't block the UI
+  loadRecap();        // AI weekly summary (fire-and-forget)
 }
 
 async function loadSuggestions(){
@@ -456,6 +536,25 @@ async function loadWeeklyStreak(){
   document.getElementById('wkCalFill').style.width=Math.min(d.cal_adherence,100)+'%';
   document.getElementById('wkProtFill').style.width=Math.min(d.protein_adherence,100)+'%';
   document.getElementById('wkSub').textContent=d.days_logged+' of '+d.days_total+' days logged';
+}
+
+/* ---------- WEEKLY AI RECAP ---------- */
+async function loadRecap(){
+  const card=document.getElementById('recapCard');
+  const body=document.getElementById('recapBody');
+  if(card.dataset.loading){return;}
+  card.dataset.loading='1';
+  body.innerHTML='<span class="spinner" style="width:18px;height:18px"></span>';
+  try{
+    const d=await getJSON('/api/recap');
+    if(d && d.recap){
+      body.textContent=d.recap;
+      card.style.display='block';
+    } else {
+      card.style.display='none';
+    }
+  }catch(e){ card.style.display='none'; }
+  delete card.dataset.loading;
 }
 
 /* ---------- WATER ---------- */

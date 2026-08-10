@@ -41,6 +41,11 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT, day TEXT, weight_kg REAL, notes TEXT
             )""")
+        # progress photos (migrate: add photo column if missing)
+        try:
+            c.execute("ALTER TABLE weight ADD COLUMN photo TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
         c.execute("""
             CREATE TABLE IF NOT EXISTS water (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,12 +102,12 @@ def save_workout(d):
         return c.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
 
 
-def save_weight(kg, notes=""):
+def save_weight(kg, notes="", photo=None):
     now = _now()
     with _conn() as c:
-        c.execute("INSERT INTO weight (ts, day, weight_kg, notes) VALUES (?,?,?,?)",
+        c.execute("INSERT INTO weight (ts, day, weight_kg, notes, photo) VALUES (?,?,?,?,?)",
                   (now.strftime("%Y-%m-%d %H:%M:%S"), now.strftime("%Y-%m-%d"),
-                   _float(kg), notes))
+                   _float(kg), notes, photo or ""))
 
 
 def delete_entry(kind, entry_id):
@@ -413,6 +418,9 @@ def weight_trend(days_back=60):
         crows = c.execute(
             "SELECT day, SUM(calories) cal FROM food WHERE day>=? "
             "GROUP BY day ORDER BY day", (start,)).fetchall()
+        photos = c.execute(
+            "SELECT id, ts, day, weight_kg, photo FROM weight "
+            "WHERE photo IS NOT NULL AND photo != '' ORDER BY id DESC LIMIT 12").fetchall()
     weights = [{"day": r["day"][5:], "kg": round(r["w"], 1)} for r in wrows]
     cal_map = {r["day"]: r["cal"] for r in crows}
     logged = [v for v in cal_map.values() if v]
@@ -432,6 +440,7 @@ def weight_trend(days_back=60):
         "rate_kg_per_week": rate,
         "current": round(wrows[-1]["w"], 1) if wrows else None,
         "start": round(wrows[0]["w"], 1) if wrows else None,
+        "photos": [dict(p) for p in photos],
     }
 
 

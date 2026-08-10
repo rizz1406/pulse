@@ -31,6 +31,7 @@
     <div class="brand">Pulse<span>.</span></div>
     <div style="display:flex;align-items:center;gap:10px">
       <div class="streak-pill" id="streakPill"><span class="flame">🔥</span> <span id="streakNum">0</span> day streak</div>
+      <button class="icon-btn" style="width:38px;height:38px;font-size:15px" onclick="toggleTheme()" title="Toggle theme">🌓</button>
       <button class="icon-btn" style="width:38px;height:38px;font-size:16px" onclick="openGoal()">⚙️</button>
     </div>
   </header>
@@ -106,6 +107,12 @@
       </div>
       <div class="wkstreak-sub" id="wkSub">0 of 7 days logged</div>
     </div>
+    <!-- Weekly AI Recap -->
+    <div class="card recap-card" id="recapCard" style="display:none">
+      <div class="recap-header">✨ Weekly recap</div>
+      <div class="recap-body" id="recapBody"></div>
+      <button class="recap-refresh" onclick="loadRecap()">⟳ Regenerate</button>
+    </div>
     <h2 class="eyebrow">Today's log</h2>
     <div id="todayList"></div>
     <!-- AI Suggestions -->
@@ -119,6 +126,7 @@
   <!-- PROGRESS -->
   <div class="section" id="tab-progress">
     <div class="prog-hero card" id="progHero"></div>
+    <div class="card" id="photoStrip" style="display:none"></div>
     <div class="card"><h3>Weight <span class="hint">toward goal</span></h3><div class="chart-wrap"><canvas id="weightTrend"></canvas></div></div>
     <div class="card"><h3>Pace <span class="hint">is the cut on track?</span></h3><div id="paceBox"></div></div>
   </div>
@@ -167,6 +175,7 @@
 <!-- hidden inputs: camera (back cam) + gallery -->
 <input id="camInput" type="file" accept="image/*" capture="environment" style="display:none" onchange="onPhoto(this)">
 <input id="galInput" type="file" accept="image/*" style="display:none" onchange="onPhoto(this)">
+<input id="progPhotoInput" type="file" accept="image/*" style="display:none" onchange="onProgPhoto(this)">
 
 <!-- PREVIEW SHEET -->
 <div class="overlay" id="overlay">
