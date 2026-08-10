@@ -44,8 +44,8 @@ def init_db():
         # progress photos (migrate: add photo column if missing)
         try:
             c.execute("ALTER TABLE weight ADD COLUMN photo TEXT")
-        except sqlite3.OperationalError:
-            pass  # column already exists
+        except (sqlite3.OperationalError, ValueError):
+            pass  # column already exists (libsql raises ValueError on Hrana)
         c.execute("""
             CREATE TABLE IF NOT EXISTS water (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
