@@ -92,7 +92,8 @@ UNIFIED_PROMPT = (
     "bodyweight), sets, reps (estimate if only one given), notes.\n\n"
     "IF weight: fill weight_kg (number, convert from lbs if needed) and notes.\n\n"
     "IF chat: fill 'reply' with one or two short, warm sentences matching the "
-    "user's language, gently steering them back to logging meals or workouts."
+    "user's language, gently steering them back to logging meals or workouts.\n\n"
+    "Return valid JSON."
 )
 
 # ─────────────────────────────────────────────────────────────

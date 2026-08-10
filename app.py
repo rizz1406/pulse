@@ -7,6 +7,7 @@ A simple passcode gates access so only you can use it.
 import base64
 import functools
 import json
+import re
 import urllib.request
 
 from flask import (
@@ -459,7 +460,11 @@ def suggest():
 @login_required
 def barcode_lookup(code):
     """Look up a barcode via OpenFoodFacts API."""
-    url = f"https://world.openfoodfacts.org/api/v2/product/{code}.json"
+    m = re.search(r'(\d{8,14})', code)
+    clean = m.group(1) if m else re.sub(r'\D', '', code)
+    if not clean or len(clean) < 8:
+        return jsonify({"found": False, "error": "Not a valid barcode number"})
+    url = f"https://world.openfoodfacts.org/api/v2/product/{clean}.json"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Pulse/1.0"})
         with urllib.request.urlopen(req, timeout=8) as resp:
