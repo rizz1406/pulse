@@ -247,7 +247,8 @@ def _singular(word):
 def _extract_qty(text):
     """Extract quantity multiplier and unit from text.
 
-    Returns (qty, unit_food_key_or_None, cleaned_text, gram_mode, raw_unit).
+    Returns (qty, unit_food_key_or_None, cleaned_text, gram_mode, ml_mode,
+             raw_unit).
     raw_unit is the matched unit word (e.g. "cup", "piece") or None —
     used to match against FatSecret serving descriptions.
     """
@@ -258,7 +259,7 @@ def _extract_qty(text):
     if m:
         qty = float(m.group(1))
         cleaned = t[:m.start()] + t[m.end():]
-        return qty, None, cleaned.strip(), False, None
+        return qty, None, cleaned.strip(), False, False, None
 
     # 2. Try "N <unit>" patterns (roti, egg, bowl, etc.)
     m = _QTY_RE.search(t)
@@ -270,7 +271,7 @@ def _extract_qty(text):
         if unit_key not in FOODS:
             unit_key = None
         cleaned = t[:m.start()] + t[m.end():]
-        return qty, unit_key, cleaned.strip(), False, unit
+        return qty, unit_key, cleaned.strip(), False, False, unit
 
     # 3. Try "half/quarter <unit>"
     m = _HALF_RE.search(t)
@@ -280,7 +281,7 @@ def _extract_qty(text):
         if unit_key not in FOODS:
             unit_key = None
         cleaned = t[:m.start()] + t[m.end():]
-        return 0.5, unit_key, cleaned.strip(), False, unit
+        return 0.5, unit_key, cleaned.strip(), False, False, unit
 
     m = _QUARTER_RE.search(t)
     if m:
@@ -289,21 +290,21 @@ def _extract_qty(text):
         if unit_key not in FOODS:
             unit_key = None
         cleaned = t[:m.start()] + t[m.end():]
-        return 0.25, unit_key, cleaned.strip(), False, unit
+        return 0.25, unit_key, cleaned.strip(), False, False, unit
 
     # 4. Try explicit grams: "200g chicken"
     m = _GRAM_RE.search(t)
     if m:
         grams = float(m.group(1))
         cleaned = t[:m.start()] + t[m.end():]
-        return grams / 100.0, None, cleaned.strip(), True, None
+        return grams / 100.0, None, cleaned.strip(), True, False, None
 
     # 5. Try explicit ml: "500ml juice"
     m = _ML_RE.search(t)
     if m:
         ml = float(m.group(1))
         cleaned = t[:m.start()] + t[m.end():]
-        return ml / 100.0, None, cleaned.strip(), True, None
+        return ml / 100.0, None, cleaned.strip(), True, True, None
 
     # 6. Generic leading count for countable foods without a known unit
     #    ("2 biryani", "2 big macs"). Not gram_mode — it multiplies servings.
@@ -311,16 +312,16 @@ def _extract_qty(text):
     if m:
         qty = float(m.group(1))
         cleaned = t[m.end():].strip()
-        return qty, None, cleaned, False, None
+        return qty, None, cleaned, False, False, None
 
     # 7. Same but spelled out ("one boiled egg", "two biryani", "dozen eggs").
     m = _WORD_COUNT_RE.match(t)
     if m:
         qty = _WORD_NUMBERS[m.group(1).lower()]
         cleaned = t[m.end():].strip()
-        return qty, None, cleaned, False, None
+        return qty, None, cleaned, False, False, None
 
-    return 1.0, None, t, False, None
+    return 1.0, None, t, False, False, None
 
 
 def _words(text):
@@ -465,7 +466,7 @@ def _parse_single(text):
 
     # Extract quantity + unit
     result = _extract_qty(t)
-    qty, unit_key, cleaned, gram_mode, _raw_unit = result
+    qty, unit_key, cleaned, gram_mode, ml_mode, _raw_unit = result
 
     # Strategy 1: If we got a unit key (e.g. "2 eggs" → "boiled egg")
     if unit_key and unit_key in FOODS:
@@ -478,7 +479,7 @@ def _parse_single(text):
                 data["cal"], data["p"], data["c"], data["f"],
                 data["serving_g"], qty, gram_mode)
 
-        item_name = f"{_qty_word(qty)} {unit_key.title()}" if qty != 1 else unit_key.title()
+        item_name = _item_name(unit_key, qty, gram_mode, ml_mode)
         return _build_result(
             item_name=item_name,
             cal=cal, p=p, c=c, f=f,
@@ -501,7 +502,7 @@ def _parse_single(text):
                 # Per-serving item matched by substring — use qty from extraction
                 cal, p, c, f = _calc_serving_nutrition(
                     data["cal"], data["p"], data["c"], data["f"], qty)
-                item_name = f"{_qty_word(qty)} {key.title()}" if qty != 1 else key.title()
+                item_name = _item_name(key, qty, gram_mode, ml_mode)
                 return _build_result(
                     item_name=item_name,
                     cal=cal, p=p, c=c, f=f,
@@ -516,7 +517,7 @@ def _parse_single(text):
                 cal, p, c, f = _calc_nutrition(
                     data["cal"], data["p"], data["c"], data["f"],
                     data["serving_g"], qty, gram_mode)
-                item_name = f"{_qty_word(qty)} {key.title()}" if qty != 1 else key.title()
+                item_name = _item_name(key, qty, gram_mode, ml_mode)
                 return _build_result(
                     item_name=item_name,
                     cal=cal, p=p, c=c, f=f,
@@ -536,7 +537,7 @@ def _parse_single(text):
             cal, p, c, f = _calc_nutrition(
                 data["cal"], data["p"], data["c"], data["f"],
                 data["serving_g"], qty, gram_mode)
-            item_name = f"{_qty_word(qty)} {key.title()}" if qty != 1 else key.title()
+            item_name = _item_name(key, qty, gram_mode, ml_mode)
             return _build_result(
                 item_name=item_name,
                 cal=cal, p=p, c=c, f=f,
@@ -557,7 +558,7 @@ def _parse_single(text):
             cal, p, c, f = _calc_nutrition(
                 data["cal"], data["p"], data["c"], data["f"],
                 data["serving_g"], qty, gram_mode)
-            item_name = f"{_qty_word(qty)} {key.title()}" if qty != 1 else key.title()
+            item_name = _item_name(key, qty, gram_mode, ml_mode)
             return _build_result(
                 item_name=item_name,
                 cal=cal, p=p, c=c, f=f,
@@ -643,6 +644,19 @@ def _qty_word(qty):
     if qty == int(qty):
         return str(int(qty))
     return f"{qty:.1f}"
+
+
+def _item_name(key, qty, gram_mode, ml_mode=False):
+    """Human-readable name for a parsed food. In gram/ml mode the qty is a
+    per-100 multiplier, so show the real amount ('200g Dal') instead of a
+    count ('2 Dal')."""
+    if ml_mode:
+        return f"{int(round(qty * 100))}ml {key.title()}" if qty * 100 == int(qty * 100) else f"{qty * 100:g}ml {key.title()}"
+    if gram_mode:
+        return f"{int(round(qty * 100))}g {key.title()}" if qty * 100 == int(qty * 100) else f"{qty * 100:g}g {key.title()}"
+    if qty != 1:
+        return f"{_qty_word(qty)} {key.title()}"
+    return key.title()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -890,7 +904,7 @@ def parse_fatsecret(text):
         return None
 
     # Extract qty from the original text
-    qty, unit_key, cleaned, gram_mode, raw_unit = _extract_qty(text.lower())
+    qty, unit_key, cleaned, gram_mode, _ml_mode, raw_unit = _extract_qty(text.lower())
 
     # Build search query from significant words
     search_words = _words(cleaned) if cleaned else words

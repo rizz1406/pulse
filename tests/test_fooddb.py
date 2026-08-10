@@ -163,6 +163,34 @@ class TestFoodDB(unittest.TestCase):
         self.assertIsNotNone(d2)
         self.assertEqual(d2["calories"], 358)  # 2 banana (214) + 2 eggs (144)
 
+    def test_plate_rice_with_gram_curry(self):
+        """'1 plate rice with 100g chicken curry' mixes a plate-sized item
+        with an explicit-gram item — both should resolve in one log.
+
+        1 plate rice = 195 kcal (1 × 150g serving)
+        100g chicken curry = 180 kcal (180 per 100g)
+        Total = 375 kcal
+        """
+        d = fooddb.parse_local("1 plate rice with 100g chicken curry")
+        self.assertIsNotNone(d)
+        self.assertEqual(d["calories"], 375)
+        self.assertIn("Rice", d["item_name"])
+        self.assertIn("Chicken Curry", d["item_name"])
+        self.assertEqual(d["source"], "local")
+
+    def test_gram_qty_displayed_in_grams(self):
+        """'200g dal' should read '200g Dal', not '2 Dal'."""
+        d = fooddb.parse_local("200g dal")
+        self.assertIsNotNone(d)
+        self.assertEqual(d["item_name"], "200g Dal")
+        self.assertEqual(d["calories"], 232)
+
+    def test_ml_qty_displayed_in_ml(self):
+        """'500ml juice' should read '500ml Juice', not '500g Juice'."""
+        d = fooddb.parse_local("500ml juice")
+        self.assertIsNotNone(d)
+        self.assertEqual(d["item_name"], "500ml Juice")
+
     # ── Quantity extraction ──
     def test_qty_with_x_multiplier(self):
         """'2x banana' = 2 bananas."""
@@ -495,20 +523,20 @@ class TestFatSecret(unittest.TestCase):
 
     def test_extract_qty_pieces(self):
         """'10 pieces pani puri' → qty=10, raw_unit='piece'."""
-        qty, unit_key, cleaned, gram_mode, raw_unit = fooddb._extract_qty("10 pieces pani puri")
+        qty, unit_key, cleaned, gram_mode, ml_mode, raw_unit = fooddb._extract_qty("10 pieces pani puri")
         self.assertEqual(qty, 10)
         self.assertEqual(raw_unit, "piece")
         self.assertIn("pani puri", cleaned)
 
     def test_extract_qty_simple(self):
         """'2 eggs' → qty=2, raw_unit='egg'."""
-        qty, unit_key, cleaned, gram_mode, raw_unit = fooddb._extract_qty("2 eggs")
+        qty, unit_key, cleaned, gram_mode, ml_mode, raw_unit = fooddb._extract_qty("2 eggs")
         self.assertEqual(qty, 2)
         self.assertEqual(raw_unit, "egg")
 
     def test_extract_qty_grams(self):
         """'200g chicken' → gram_mode=True, qty=2.0."""
-        qty, unit_key, cleaned, gram_mode, raw_unit = fooddb._extract_qty("200g chicken")
+        qty, unit_key, cleaned, gram_mode, ml_mode, raw_unit = fooddb._extract_qty("200g chicken")
         self.assertTrue(gram_mode)
         self.assertAlmostEqual(qty, 2.0)
 
