@@ -193,21 +193,25 @@ _UNIT_TO_FOOD = {
     "banana": "banana", "apple": "apple", "orange": "orange",
 }
 
+_UNIT_ALT = (
+    r'bowl|plate|cup|glass(?:es)?|piece|slice|serving|roti|chapati|paratha|naan|'
+    r'idli|dosa|uttapam|egg(?:s)?|boiled\ egg(?:s)?|fried\ egg(?:s)?|'
+    r'samosa|biscuit|banana|apple|orange'
+)
+
 _QTY_RE = re.compile(
     r'(\d+(?:\.\d+)?)\s*'
     r'(?:x|×)\s*|'
     r'(\d+(?:\.\d+)?)\s*'
-    r'(bowl|plate|cup|glass(?:es)?|piece|slice|serving|roti|chapati|paratha|naan|'
-    r'idli|dosa|uttapam|egg(?:s)?|boiled\ egg(?:s)?|fried\ egg(?:s)?|'
-    r'samosa|biscuit|banana|apple|orange)s?\b',
+    r'(' + _UNIT_ALT + r')s?\b',
     re.I
 )
 
 _HALF_RE = re.compile(
-    r'\b(half|0\.5)\s*(bowl|plate|cup|glass|serving)\b', re.I
+    r'\b(half|0\.5)\s*(' + _UNIT_ALT + r')\b', re.I
 )
 _QUARTER_RE = re.compile(
-    r'\b(quarter|0\.25)\s*(bowl|plate|cup|serving)\b', re.I
+    r'\b(quarter|0\.25)\s*(' + _UNIT_ALT + r')\b', re.I
 )
 _GRAM_RE = re.compile(r'(\d+(?:\.\d+)?)\s*g\b', re.I)
 _ML_RE = re.compile(r'(\d+(?:\.\d+)?)\s*ml\b', re.I)
@@ -227,6 +231,17 @@ _WORD_NUMBERS = {
 _WORD_COUNT_RE = re.compile(
     r'^\s*(' + '|'.join(sorted(_WORD_NUMBERS, key=len, reverse=True)) + r')\s+(?=[a-zA-Z])',
     re.I)
+
+
+def _singular(word):
+    """Singularize a plural word, keeping 'ss' intact ('glasses' → 'glass')."""
+    if word.endswith("sses"):
+        return word[:-2]
+    if word.endswith("ss"):
+        return word
+    if word.endswith("s"):
+        return word[:-1]
+    return word
 
 
 def _extract_qty(text):
@@ -249,7 +264,7 @@ def _extract_qty(text):
     m = _QTY_RE.search(t)
     if m:
         qty_str = m.group(1) or m.group(2)
-        unit = (m.group(3) or "").lower().rstrip("s")
+        unit = _singular((m.group(3) or "").lower())
         qty = float(qty_str) if qty_str else 1.0
         unit_key = _UNIT_TO_FOOD.get(unit, unit)
         if unit_key not in FOODS:
@@ -260,7 +275,7 @@ def _extract_qty(text):
     # 3. Try "half/quarter <unit>"
     m = _HALF_RE.search(t)
     if m:
-        unit = m.group(2).lower().rstrip("s")
+        unit = _singular(m.group(2).lower())
         unit_key = _UNIT_TO_FOOD.get(unit, unit)
         if unit_key not in FOODS:
             unit_key = None
@@ -269,7 +284,7 @@ def _extract_qty(text):
 
     m = _QUARTER_RE.search(t)
     if m:
-        unit = m.group(2).lower().rstrip("s")
+        unit = _singular(m.group(2).lower())
         unit_key = _UNIT_TO_FOOD.get(unit, unit)
         if unit_key not in FOODS:
             unit_key = None
@@ -311,6 +326,12 @@ def _extract_qty(text):
 def _words(text):
     """Extract significant words from text."""
     return [w for w in re.findall(r'[a-z]+', text.lower()) if w not in _STOP and len(w) > 1]
+
+
+def _singular_words(text):
+    """Singularize every word so plural multi-word keys match
+    ('chicken breasts' → 'chicken breast')."""
+    return " ".join(_singular(w) for w in text.split())
 
 
 def _calc_nutrition(base_cal, base_p, base_c, base_f, serving_g, qty, gram_mode=False):
@@ -390,6 +411,20 @@ def _match_food_words(query_words):
             if score > best_score:
                 best = (key, data)
                 best_score = score
+    if best:
+        return best
+    # Retry with plural words singularized ("chicken breasts" → "chicken breast")
+    singular_words = [_singular(w) for w in query_words]
+    for key, data in FOODS.items():
+        if data.get("_per_serving"):
+            continue
+        key_words = set(key.split())
+        overlap = len(set(singular_words) & key_words)
+        if overlap >= len(key_words):
+            score = (overlap, len(key_words))
+            if score > best_score:
+                best = (key, data)
+                best_score = score
     return best
 
 
@@ -458,8 +493,9 @@ def _parse_single(text):
     # (longest match first to avoid substring collisions). Word-wrapped:
     # raw substring match made "cola" match inside "chocolate".
     food_keys_sorted = sorted(FOODS.keys(), key=len, reverse=True)
+    t_singular = _singular_words(t)
     for key in food_keys_sorted:
-        if re.search(rf'\b{re.escape(key)}\b', t):
+        if re.search(rf'\b{re.escape(key)}\b', t) or re.search(rf'\b{re.escape(key)}\b', t_singular):
             data = FOODS[key]
             if data.get("_per_serving"):
                 # Per-serving item matched by substring — use qty from extraction
@@ -739,7 +775,8 @@ def _fs_parse_serving_description(description):
 
     # Normalize to per-100g if the reference isn't already 100 (ml ≈ g for
     # beverages: "Per 330ml" values are per 330ml, so scale to per-100ml).
-    scaled = ref_unit in ("g", "ml") and ref_amount != 100.0
+    # Guard against malformed descriptions like "Per 0g".
+    scaled = ref_unit in ("g", "ml") and ref_amount > 0 and ref_amount != 100.0
     if scaled:
         scale = 100.0 / ref_amount
         cal = round(cal * scale)
@@ -812,10 +849,12 @@ def _fs_semantic_score(query_words, food_name):
     return overlap * 2 + bigram_overlap * 3 + brand_penalty + length_bonus
 
 
-def _fs_pick_best(results, query_words):
+def _fs_pick_best(results, query_words, raw_unit=None):
     """Pick the best FatSecret result using semantic scoring.
 
     NOT highest calories — uses word overlap, bigram matching, brand penalty.
+    Ties break in favor of a result whose serving unit matches the user's
+    unit ("Per 1 cup" when the user said "cup").
     """
     if not results:
         return None
@@ -828,13 +867,14 @@ def _fs_pick_best(results, query_words):
         if not parsed or parsed["cal_per100g"] == 0:
             continue
         score = _fs_semantic_score(query_words, name)
-        scored.append((score, parsed, name, item))
+        unit_match = bool(raw_unit) and raw_unit == parsed["orig_unit"]
+        scored.append((score, 1 if unit_match else 0, parsed, name, item))
 
     if not scored:
         return None
 
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return scored[0]  # (score, parsed, name, raw_item)
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return scored[0]  # (score, unit_match, parsed, name, raw_item)
 
 
 def parse_fatsecret(text):
@@ -860,11 +900,11 @@ def parse_fatsecret(text):
     if not results:
         return None
 
-    best = _fs_pick_best(results, words)
+    best = _fs_pick_best(results, words, raw_unit)
     if not best:
         return None
 
-    score, parsed, name, raw_item = best
+    score, unit_match, parsed, name, raw_item = best
 
     # Serving selection — data-driven, from the FatSecret description:
     #   * user gave explicit grams/ml → scale per-100g by that amount
@@ -929,7 +969,11 @@ def parse_food(text, payload=None):
 
     Returns dict with audit trail or None.
     """
-    if not text or not text.strip():
+    if not text:
+        return None
+    if not isinstance(text, str):
+        text = str(text)
+    if not text.strip():
         return None
 
     # Tier 1: Local database

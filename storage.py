@@ -129,12 +129,17 @@ def add_water(ml=250):
 
 
 def undo_water():
-    """Remove the most recent water entry (fat-finger recovery)."""
+    """Remove the most recent water entry (fat-finger recovery).
+
+    Returns (removed, today_total_dict) where removed is True when an entry
+    was actually deleted."""
+    removed = False
     with _conn() as c:
         r = c.execute("SELECT id FROM water ORDER BY id DESC LIMIT 1").fetchone()
         if r:
             c.execute("DELETE FROM water WHERE id=?", (r["id"],))
-    return today_water()
+            removed = True
+    return removed, today_water()
 
 
 def today_water():

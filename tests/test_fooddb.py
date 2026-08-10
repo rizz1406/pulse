@@ -185,6 +185,37 @@ class TestFoodDB(unittest.TestCase):
         # biryani per-100g=180, serving=250g, qty=0.25 → 180*2.5*0.25 = 112.5 → 112
         self.assertEqual(d["calories"], 112)
 
+    def test_qty_half_egg(self):
+        """'half egg' = 0.5 servings (per-serving: 72 cal → 36)."""
+        d = fooddb.parse_local("half egg")
+        self.assertIsNotNone(d)
+        self.assertEqual(d["calories"], 36)
+        self.assertEqual(d["qty"], 0.5)
+
+    def test_qty_half_roti(self):
+        """'half roti' = 0.5 servings (per-serving roti)."""
+        d = fooddb.parse_local("half roti")
+        self.assertIsNotNone(d)
+        self.assertEqual(d["qty"], 0.5)
+
+    def test_qty_quarter_samosa(self):
+        """'quarter samosa' = 0.25 servings (per-serving samosa)."""
+        d = fooddb.parse_local("quarter samosa")
+        self.assertIsNotNone(d)
+        self.assertEqual(d["qty"], 0.25)
+
+    def test_plural_multiword_key(self):
+        """'chicken breasts' matches multi-word key 'chicken breast'."""
+        d = fooddb.parse_local("200g chicken breasts")
+        self.assertIsNotNone(d)
+        self.assertEqual(d["matched_food"], "chicken breast")
+
+    def test_glasses_keeps_ss(self):
+        """'2 glasses of milk' → unit 'glass' (rstrip('s') bug fix)."""
+        d = fooddb.parse_local("2 glasses milk")
+        self.assertIsNotNone(d)
+        self.assertEqual(d["qty"], 2)
+
     # ── Explicit grams/ml ──
     def test_explicit_grams_dal(self):
         """'200g dal' = 232 kcal."""
@@ -349,7 +380,7 @@ class TestFatSecret(unittest.TestCase):
         ]
         best = fooddb._fs_pick_best(results, {"cornflakes"})
         self.assertIsNotNone(best)
-        self.assertEqual(best[2], "Cornflakes")  # semantic match, not Special K
+        self.assertEqual(best[3], "Cornflakes")  # semantic match, not Special K
 
     # ── Regression: FatSecret serving/unit handling ──
     def test_ml_description_normalized_to_per100(self):
@@ -390,7 +421,20 @@ class TestFatSecret(unittest.TestCase):
              "Per 100g - Calories: 350kcal | Fat: 18g | Carbs: 35g | Protein: 14g"},
         ]
         best = fooddb._fs_pick_best(results, {"big", "macs"})
-        self.assertEqual(best[2], "Big Mac")
+        self.assertEqual(best[3], "Big Mac")
+
+    def test_fs_pick_best_unit_tiebreak(self):
+        """"Tie scores break toward the result whose serving unit matches."""
+        results = [
+            {"food_name": "Curd", "food_description":
+             "Per 1 cup - Calories: 150kcal | Fat: 2g | Carbs: 30g | Protein: 4g"},
+            {"food_name": "Curd", "food_description":
+             "Per 100g - Calories: 60kcal | Fat: 1g | Carbs: 5g | Protein: 3g"},
+        ]
+        best = fooddb._fs_pick_best(results, {"curd"}, raw_unit="cup")
+        self.assertIsNotNone(best)
+        self.assertEqual(best[1], 1)  # unit match flag set
+        self.assertEqual(best[2]["per_serving"]["cal"], 150)
 
     def test_parse_fatsecret_uses_real_serving(self):
         """parse_fatsecret uses the description's real serving (200g), not 100g."""

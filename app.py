@@ -66,7 +66,7 @@ def _days_arg(default=30):
 
 @app.route("/api/login", methods=["POST"])
 def login():
-    data = request.get_json(force=True)
+    data = request.get_json(force=True) or {}
     if not config.APP_PASSCODE or data.get("passcode") == config.APP_PASSCODE:
         session["authed"] = True
         session.permanent = True
@@ -98,7 +98,7 @@ def log():
     raw = ""
     skip_clarify = False
     if request.is_json:
-        body = request.get_json(force=True)
+        body = request.get_json(force=True) or {}
         text = (body.get("text") or "").strip()
         skip_clarify = bool(body.get("skip_clarification"))
         if not text:
@@ -113,6 +113,8 @@ def log():
         file = request.files.get("media")
         if file:
             blob = file.read()
+            if len(blob) > 8 * 1024 * 1024:
+                return jsonify({"error": "Media too large — max 8MB"}), 413
             mime = file.mimetype or "application/octet-stream"
             payload.append({"mime_type": mime, "data": blob})
             if not raw:
@@ -145,7 +147,7 @@ def log():
 @login_required
 def pill():
     """Resolve a clarification pill selection to full nutrition."""
-    d = request.get_json(force=True)
+    d = request.get_json(force=True) or {}
     pill_text = d.get("pill_text", "")
     food_name = d.get("food_name", "")
     if not pill_text:
@@ -165,7 +167,7 @@ def pill():
 def clarify():
     """Re-estimate a food entry after the user taps a clarifying answer.
     Supports up to 2 chained questions (e.g. oil, then amount)."""
-    d = request.get_json(force=True)
+    d = request.get_json(force=True) or {}
     # 'original' accumulates prior Q&A so each round keeps full context.
     original = d.get("original", "")
     question = d.get("question", "")
@@ -186,7 +188,7 @@ def clarify():
 @login_required
 def confirm():
     """Persist a parsed entry the user approved."""
-    d = request.get_json(force=True)
+    d = request.get_json(force=True) or {}
     t = d.get("type")
     if t == "food":
         for k in ("item_name", "calories", "protein_g", "carbs_g", "fat_g"):
@@ -218,7 +220,7 @@ def confirm():
 @login_required
 def edit():
     """Edit an already-logged entry."""
-    d = request.get_json(force=True)
+    d = request.get_json(force=True) or {}
     kind, eid, fields = d.get("kind"), d.get("id"), d.get("fields", {})
     if kind == "food":
         storage.update_food(eid, fields)
@@ -272,7 +274,7 @@ def autocomplete():
 @app.route("/api/relog", methods=["POST"])
 @login_required
 def relog():
-    d = request.get_json(force=True)
+    d = request.get_json(force=True) or {}
     saved = storage.relog_meal(d.get("item_name", ""))
     if not saved:
         return jsonify({"error": "not found"}), 404
@@ -294,7 +296,7 @@ def progress():
 @app.route("/api/delete", methods=["POST"])
 @login_required
 def delete():
-    d = request.get_json(force=True)
+    d = request.get_json(force=True) or {}
     storage.delete_entry(d.get("kind"), d.get("id"))
     return jsonify({"ok": True})
 
@@ -311,7 +313,7 @@ def get_goal():
 @app.route("/api/goal", methods=["POST"])
 @login_required
 def set_goal():
-    d = request.get_json(force=True)
+    d = request.get_json(force=True) or {}
     try:
         weight = float(d["weight_kg"])
         height = float(d["height_cm"])
@@ -335,7 +337,7 @@ def set_goal():
 @login_required
 def preview_targets():
     """Live-calculate targets from form inputs without saving (for the UI)."""
-    d = request.get_json(force=True)
+    d = request.get_json(force=True) or {}
     try:
         t = goals.calculate(
             float(d["weight_kg"]), float(d["height_cm"]), int(d["age"]),
@@ -365,9 +367,12 @@ def today():
 @app.route("/api/water", methods=["POST"])
 @login_required
 def water():
-    d = request.get_json(force=True)
+    d = request.get_json(force=True) or {}
     if d.get("undo"):
-        return jsonify({"ok": True, "water": storage.undo_water()})
+        removed, total = storage.undo_water()
+        if not removed:
+            return jsonify({"error": "Nothing to undo"}), 400
+        return jsonify({"ok": True, "water": total})
     try:
         ml = max(0, min(int(d.get("ml", 250)), 5000))
     except (TypeError, ValueError):

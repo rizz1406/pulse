@@ -81,13 +81,16 @@ class TestStorage(unittest.TestCase):
         storage.add_water(250)
         storage.add_water(500)
         self.assertEqual(storage.today_water()["ml"], 750)
-        storage.undo_water()
+        removed, _ = storage.undo_water()
+        self.assertTrue(removed)
         self.assertEqual(storage.today_water()["ml"], 250)
-        # delete the remaining entry by its actual ID
-        with db.connect() as c:
-            row = c.execute("SELECT id FROM water ORDER BY id DESC LIMIT 1").fetchone()
-        storage.delete_entry("water", row["id"])
+        # second undo removes the last remaining entry
+        removed2, _ = storage.undo_water()
+        self.assertTrue(removed2)
         self.assertEqual(storage.today_water()["ml"], 0)
+        # undoing again with nothing left → removed=False
+        removed3, _ = storage.undo_water()
+        self.assertFalse(removed3)
 
     def test_weekly_summary(self):
         storage.save_food({"item_name": "Dal", "calories": 300, "protein_g": 15,

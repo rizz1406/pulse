@@ -181,6 +181,8 @@ def _generate(payload, prompt):
                 temperature=0.2,
                 response_format={"type": "json_object"},
             )
+            if not response.choices:
+                return {"type": "chat", "error": "Photo analysis returned no result — try again."}
             text = response.choices[0].message.content or "{}"
         except openai.APIError as e:
             msg = str(e).lower()
@@ -205,6 +207,8 @@ def _generate(payload, prompt):
             temperature=0.2,
             response_format={"type": "json_object"},
         )
+        if not response.choices:
+            return {"type": "chat", "error": "AI returned no result — try again."}
         text = response.choices[0].message.content or "{}"
     except openai.RateLimitError as e:
         raise ParseError("Groq rate limit hit — wait a minute and try again.") from e
@@ -251,6 +255,8 @@ def _check_ambiguity(food_name, user_text):
             temperature=0.2,
             response_format={"type": "json_object"},
         )
+        if not response.choices:
+            return {"requires_clarification": False}
         text = response.choices[0].message.content or "{}"
         result = _norm_keys(json.loads(text))
     except Exception:
@@ -304,11 +310,13 @@ def _has_macros(d):
 
 
 def _norm_keys(d):
-    """Normalize AI response keys to lowercase. Groq sometimes returns
-    'TYPE' instead of 'type', 'ITEM_NAME' instead of 'item_name', etc."""
-    if not isinstance(d, dict):
-        return d
-    return {k.lower(): v for k, v in d.items()}
+    """Normalize AI response keys to lowercase recursively. Groq sometimes
+    returns 'TYPE' instead of 'type', 'ITEM_NAME' instead of 'item_name', etc."""
+    if isinstance(d, dict):
+        return {k.lower(): _norm_keys(v) for k, v in d.items()}
+    if isinstance(d, list):
+        return [_norm_keys(item) for item in d]
+    return d
 
 
 def _shape_food(d, allow_clarify=True, audit=None, pills=None, default_fallback="",
@@ -372,7 +380,10 @@ def parse(payload):
             return local_food
 
     # AI path: classify input, extract structure + estimated macros
-    d = _generate(payload, prompt)
+    try:
+        d = _generate(payload, prompt)
+    except ParseError as e:
+        return {"type": "chat", "reply": str(e) + " Or just type what you ate / did."}
     kind = d.get("type", "food" if has_image else None) or d.get("type", "chat")
 
     # AI errors (bad key, quota, no Gemini key…) → friendly chat reply
@@ -385,7 +396,7 @@ def parse(payload):
         return {"type": "chat", "reply": msg + " Or just type what you ate / did."}
 
     if kind == "food":
-        food_name = d.get("item_name", "")
+        food_name = str(d.get("item_name") or "").strip()
         audit = fooddb.parse_food(food_name) if food_name else None
         estimated = _has_macros(d)
 
@@ -448,7 +459,7 @@ def parse_food(payload, clarify_round=0):
                   "Set needs_clarification=false and give your best final estimate now.")
     prompt = prompt + "\n\n(Treat this input as FOOD.)"
     d = _generate(payload, prompt)
-    food_name = d.get("item_name", "")
+    food_name = str(d.get("item_name") or "").strip()
     audit = fooddb.parse_food(food_name) if food_name else None
     if not audit:
         audit = fooddb.parse_food(text_bits)
@@ -469,5 +480,5 @@ def parse_with_pill(pill_text, food_name=""):
     if audit:
         audit["needs_clarification"] = False
         return audit
-    # Fallback: ask Groq to parse the pill text as food
-    return parse([f"User input: {pill_text}"])
+    # Fallback: ask Groq to parse the pill text as food (food-only prompt)
+    return parse_food([f"User input: {pill_text}"])

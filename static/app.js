@@ -113,7 +113,7 @@ async function checkAutocomplete(){
       if(!d.suggestions||!d.suggestions.length){hideAutocomplete();return;}
       const el=document.getElementById('autocomplete');
       el.innerHTML=d.suggestions.map(s=>
-        `<div class="ac-item" onclick="selectAC('${esc(s.name)}')">
+        `<div class="ac-item" onclick="selectAC('${jsStr(s.name)}')">
           <span class="ac-name">${esc(s.name)}</span>
           ${s.calories?`<span class="ac-cal">${s.calories} kcal</span>`:'<span class="ac-src">database</span>'}
         </div>`
@@ -368,7 +368,7 @@ async function loadSuggestions(){
         <div class="suggest-name">${esc(s.name)}</div>
         <div class="suggest-macros">${s.calories}kcal · ${s.protein}p · ${s.carbs}c · ${s.fat}f</div>
         <div class="suggest-reason">${esc(s.reason||'')}</div>
-        <button class="suggest-log" onclick="quickLog('${esc(s.name)}',${s.calories},${s.protein},${s.carbs},${s.fat})">Log this</button>
+        <button class="suggest-log" onclick="quickLog('${jsStr(s.name)}',${s.calories},${s.protein},${s.carbs},${s.fat})">Log this</button>
       </div>
     `).join('');
     card.style.display='block';
@@ -377,10 +377,11 @@ async function loadSuggestions(){
 
 async function quickLog(name,cal,p,c,f){
   try{
-    await fetch('/api/log',{method:'POST',headers:{'Content-Type':'application/json'},
+    const r=await fetch('/api/log',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({text:name,skip_clarification:true})});
+    if(!r.ok){toast('Failed to log — try again');return;}
     refreshToday(); toast('Logged '+name);
-  }catch(e){toast('Failed to log');}
+  }catch(e){toast('Failed to log — check connection');}
 }
 function renderToday(d){
   const prevStreak = window._lastStreak || 0;
@@ -459,14 +460,22 @@ async function loadWeeklyStreak(){
 
 /* ---------- WATER ---------- */
 async function sendWater(ml){
-  const r=await fetch('/api/water',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ml})});
-  const d=await r.json();
-  if(d.ok){ toast(ml+' ml logged 💧'); refreshToday(); } else toast(d.error||'Could not log water');
+  ml=+ml;
+  if(!ml || ml<=0){toast('Enter a valid amount');return;}
+  try{
+    const r=await fetch('/api/water',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ml})});
+    const d=await r.json();
+    if(!r.ok){toast(d.error||'Could not log water');return;}
+    if(d.ok){ toast(ml+' ml logged 💧'); refreshToday(); } else toast(d.error||'Could not log water');
+  }catch(e){toast('Could not log water — check connection');}
 }
 async function undoWater(){
-  const r=await fetch('/api/water',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({undo:true})});
-  const d=await r.json();
-  if(d.ok){ toast('Removed last water'); refreshToday(); }
+  try{
+    const r=await fetch('/api/water',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({undo:true})});
+    const d=await r.json();
+    if(!r.ok){toast(d.error||'Nothing to undo');return;}
+    if(d.ok){ toast('Removed last water'); refreshToday(); } else toast(d.error||'Nothing to undo');
+  }catch(e){toast('Could not undo — check connection');}
 }
 
 /* ---------- RECENTS (quick re-log) ---------- */
@@ -525,8 +534,11 @@ async function saveEdit(kind,id){
   } else {
     fields={exercise_name:gval('e_item'),weight_kg:+gval('e_w'),sets:+gval('e_s'),reps:+gval('e_r')};
   }
-  await fetch('/api/edit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind,id,fields})});
-  closeEdit(); toast('Updated ✅'); refreshToday();
+  try{
+    const r=await fetch('/api/edit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind,id,fields})});
+    if(!r.ok){toast('Update failed — try again');return;}
+    closeEdit(); toast('Updated ✅'); refreshToday();
+  }catch(e){toast('Update failed — check connection');}
 }
 function gval(id){ return document.getElementById(id).value; }
 function setBar(k,val,max,target){
@@ -544,8 +556,11 @@ function setBar(k,val,max,target){
   requestAnimationFrame(step);
 }
 async function del(kind,id){
-  await fetch('/api/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind,id})});
-  toast('Removed'); refreshToday();
+  try{
+    const r=await fetch('/api/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind,id})});
+    if(!r.ok){toast('Remove failed — try again');return;}
+    toast('Removed'); refreshToday();
+  }catch(e){toast('Remove failed — check connection');}
 }
 
 /* ---------- ANALYTICS ---------- */
@@ -798,7 +813,7 @@ async function lookupBarcode(code){
         <div class="barcode-name">${esc(d.name)}${d.brand?' <span style="color:var(--muted)">('+esc(d.brand)+')</span>':''}</div>
         <div class="barcode-serving">${esc(d.serving_size)}</div>
         <div class="barcode-macros">${d.calories}kcal · ${d.protein}p · ${d.carbs}c · ${d.fat}f</div>
-        <button class="suggest-log" onclick="logBarcode('${esc(d.name)}',${d.calories},${d.protein},${d.carbs},${d.fat})">Log this</button>
+        <button class="suggest-log" onclick="logBarcode('${jsStr(d.name)}',${d.calories},${d.protein},${d.carbs},${d.fat})">Log this</button>
       </div>`;
   }catch(e){res.innerHTML='<div style="color:var(--danger);font-size:13px">Network error — try again</div>';}
 }
