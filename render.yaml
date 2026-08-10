@@ -6,12 +6,10 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --workers 1 --timeout 120 --graceful-timeout 30
     envVars:
-      - key: GEMINI_API_KEY
+      - key: GROQ_API_KEY
         sync: false
       - key: APP_PASSCODE
         sync: false
-      - key: GEMINI_MODEL
-        value: gemini-3.5-flash
       - key: TURSO_DATABASE_URL
         sync: false
       - key: TURSO_AUTH_TOKEN
