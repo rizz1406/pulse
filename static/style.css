@@ -303,3 +303,31 @@ h2.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:va
 .pace-line{font-size:15px;line-height:1.6}
 .pace-good{color:var(--accent)} .pace-warn{color:var(--fat)}
 .pace-note{color:var(--muted);font-size:13px;margin-top:10px;line-height:1.5}
+
+/* ---- Weekly Streak Card ---- */
+.weekly-streak-card{padding:16px !important}
+.wkstreak-header{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.wkstreak-flame{font-size:20px}
+.wkstreak-title{font-family:'Space Grotesk';font-weight:600;font-size:15px;flex:1}
+.wkstreak-count{font-family:'Space Grotesk';font-weight:700;font-size:22px;color:var(--accent)}
+.wkstreak-bars{display:flex;flex-direction:column;gap:10px}
+.wkstreak-bar-row{display:flex;align-items:center;gap:10px}
+.wkstreak-label{font-size:12px;color:var(--muted);width:68px;flex-shrink:0}
+.wkstreak-track{flex:1;height:8px;background:rgba(255,255,255,0.06);border-radius:4px;overflow:hidden}
+.wkstreak-fill{height:100%;border-radius:4px;transition:width .6s cubic-bezier(.2,.8,.2,1)}
+.wkstreak-fill.cal{background:var(--accent)}
+.wkstreak-fill.prot{background:var(--carbs)}
+.wkstreak-pct{font-size:12px;font-weight:600;width:36px;text-align:right;flex-shrink:0}
+.wkstreak-sub{font-size:11px;color:var(--muted);margin-top:10px;text-align:center}
+
+/* ---- Pill Clarification ---- */
+.clarify-pills{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 10px}
+.clarify-pill{background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
+  padding:10px 16px;border-radius:14px;font-size:14px;cursor:pointer;
+  font-family:'Inter';transition:all .15s;flex:1;min-width:120px;text-align:center}
+.clarify-pill:active{border-color:var(--accent);background:rgba(196,255,77,0.08);
+  transform:scale(.97)}
+.clarify-default{background:transparent;border:1px dashed var(--line);color:var(--muted);
+  padding:10px 16px;border-radius:14px;font-size:13px;cursor:pointer;
+  font-family:'Inter';width:100%;transition:all .15s}
+.clarify-default:active{border-color:var(--accent);color:var(--accent)}

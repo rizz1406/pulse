@@ -147,7 +147,12 @@ async function toggleMic(){
 /* ---------- RESULT / PREVIEW ---------- */
 function handleResult(d){
   if(d.type==='chat'){ showChat(d.reply); return; }
-  // Smart clarification: ask one quick question to nail the portion
+  // New pills-based clarification (from ambiguity check)
+  if(d.type==='food' && d.pills && d.pills.length){
+    showPillClarify(d);
+    return;
+  }
+  // Legacy clarification (string options)
   if(d.type==='food' && d.needs_clarification && d.clarify_options && d.clarify_options.length){
     showClarify(d);
     return;
@@ -225,6 +230,62 @@ function skipClarify(){
   clarifyCtx=null; handleResult(d);
 }
 
+/* ---------- PILL-BASED CLARIFICATION ---------- */
+let pillCtx=null;
+function showPillClarify(d){
+  pillCtx={
+    food_name: d.item_name,
+    pills: d.pills,
+    default_fallback: d.default_fallback,
+    fallback: d
+  };
+  const pills=d.pills.map(p=>
+    `<button class="clarify-pill" onclick="answerPill('${jsStr(p.text)}','${jsStr(p.label)}')">${esc(p.label)}</button>`
+  ).join('');
+  const defaultBtn = d.default_fallback
+    ? `<button class="clarify-default" onclick="useDefaultEstimate()">Use default estimate (${esc(d.default_fallback)})</button>`
+    : '';
+  document.getElementById('sheet').innerHTML=
+    `<div class="ph">🍽 ${esc(d.item_name)}</div>
+     <div class="clarify-q">How was your ${esc(d.item_name)} prepared?</div>
+     <div class="clarify-pills">${pills}</div>
+     ${defaultBtn}
+     <div class="sheet-actions">
+       <button class="btn-cancel" onclick="closePillClarify()">Cancel</button>
+     </div>`;
+  document.getElementById('overlay').classList.add('show');
+}
+async function answerPill(pillText, pillLabel){
+  document.getElementById('sheet').innerHTML=
+    '<div style="text-align:center;padding:30px"><div class="spinner" style="border-top-color:var(--accent);border-color:rgba(182,255,61,.25);margin:0 auto"></div><div style="color:var(--muted);margin-top:14px;font-size:14px">Looking up nutrition…</div></div>';
+  try{
+    const r=await fetch('/api/pill',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pill_text:pillText, food_name:pillCtx.food_name})});
+    const d=await r.json();
+    if(!r.ok||!d.calories){ toast(d.error||'Could not find nutrition'); closeSheet(); return; }
+    d.needs_clarification=false;
+    d._raw=pillText;
+    pillCtx=null;
+    handleResult(d);
+  }catch(e){ toast('Network error'); closeSheet(); }
+}
+async function useDefaultEstimate(){
+  if(!pillCtx||!pillCtx.default_fallback) return closePillClarify();
+  document.getElementById('sheet').innerHTML=
+    '<div style="text-align:center;padding:30px"><div class="spinner" style="border-top-color:var(--accent);border-color:rgba(182,255,61,.25);margin:0 auto"></div><div style="color:var(--muted);margin-top:14px;font-size:14px">Using default estimate…</div></div>';
+  try{
+    const r=await fetch('/api/pill',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pill_text:pillCtx.default_fallback, food_name:pillCtx.food_name})});
+    const d=await r.json();
+    if(!r.ok||!d.calories){ toast(d.error||'Could not find nutrition'); closeSheet(); return; }
+    d.needs_clarification=false;
+    d._raw=pillCtx.default_fallback;
+    pillCtx=null;
+    handleResult(d);
+  }catch(e){ toast('Network error'); closeSheet(); }
+}
+function closePillClarify(){ pillCtx=null; closeSheet(); }
+
 function showChat(reply){
   pending=null;
   document.getElementById('sheet').innerHTML=`<div class="chat-bubble">${esc(reply)}</div>
@@ -271,6 +332,7 @@ let currentDays=30;
 async function refreshToday(){
   const d=await getJSON('/api/today');
   if(d) renderToday(d);
+  loadWeeklyStreak();
 }
 function renderToday(d){
   const prevStreak = window._lastStreak || 0;
@@ -333,6 +395,18 @@ function renderToday(d){
   });
   list.innerHTML=html||'<div class="empty">Nothing logged yet.<br>Tell me what you ate or lifted below 👇</div>';
   loadRecents();
+}
+
+/* ---------- WEEKLY STREAK ---------- */
+async function loadWeeklyStreak(){
+  const d=await getJSON('/api/analytics/weekly');
+  if(!d) return;
+  document.getElementById('wkStreakCount').textContent=d.streak;
+  document.getElementById('wkCalPct').textContent=d.cal_adherence+'%';
+  document.getElementById('wkProtPct').textContent=d.protein_adherence+'%';
+  document.getElementById('wkCalFill').style.width=Math.min(d.cal_adherence,100)+'%';
+  document.getElementById('wkProtFill').style.width=Math.min(d.protein_adherence,100)+'%';
+  document.getElementById('wkSub').textContent=d.days_logged+' of '+d.days_total+' days logged';
 }
 
 /* ---------- WATER ---------- */

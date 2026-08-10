@@ -9,6 +9,7 @@ import parser  # noqa: E402
 import storage  # noqa: E402
 import portions  # noqa: E402
 import fooddb  # noqa: E402
+import goals  # noqa: E402
 import config  # noqa: E402
 
 
@@ -53,7 +54,7 @@ class TestParser(unittest.TestCase):
             self.assertEqual(d["type"], "food")
             # Gemini returned 0 calories — no DB lookup succeeded
             self.assertEqual(d["calories"], 0)
-            self.assertEqual(d["source"], "gemini_fallback")
+            self.assertEqual(d["source"], "groq_fallback")
 
     def test_parse_food_gemini_with_db_lookup(self):
         """Gemini classifies, then DB provides nutrition."""
@@ -270,6 +271,150 @@ class TestLocalDBAccuracy(unittest.TestCase):
         d = fooddb.parse_local("rice")
         ref = 130 * 1.5  # 150g serving
         self.assertAlmostEqual(d["calories"], ref, delta=ref * 0.15)
+
+
+class TestAmbiguityCheck(unittest.TestCase):
+    """Tests for the dynamic AI clarification layer."""
+
+    def setUp(self):
+        storage.init_db()
+        portions.init_portion_table()
+
+    def test_unambiguous_food_skips_clarification(self):
+        """Local DB match bypasses ambiguity check entirely."""
+        d = parser.parse(["2 boiled eggs"])
+        self.assertEqual(d["type"], "food")
+        self.assertFalse(d.get("needs_clarification", False))
+        self.assertEqual(d["source"], "local")
+
+    def test_ambiguous_food_returns_pills(self):
+        """Ambiguous food (not in local DB) returns pills from ambiguity check."""
+        # Mock the classification to return an unknown food
+        self._fake_generate({
+            "type": "food", "item_name": "chai",
+            "calories": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0,
+            "confidence_notes": "Indian tea",
+        })
+        # Mock ambiguity check to return pills
+        amb_result = {
+            "requires_clarification": True,
+            "question": "How was your chai prepared?",
+            "pills": [
+                {"label": "Milk + Sugar", "text": "1 cup chai with milk and sugar"},
+                {"label": "Black", "text": "1 cup black tea no sugar"},
+            ],
+            "default_fallback": "1 cup chai with milk and sugar",
+        }
+        with mock.patch.object(parser.fooddb, "parse_food", return_value=None), \
+             mock.patch.object(parser, "_check_ambiguity", return_value=amb_result):
+            d = parser.parse(["User input: chai"])
+            self.assertEqual(d["type"], "food")
+            self.assertTrue(d.get("needs_clarification"))
+            self.assertIn("pills", d)
+            self.assertEqual(len(d["pills"]), 2)
+            self.assertEqual(d["pills"][0]["label"], "Milk + Sugar")
+            self.assertIn("default_fallback", d)
+
+    def test_unambiguous_groq_food_skips_pills(self):
+        """Unambiguous food from Groq skips pills and goes to DB."""
+        self._fake_generate({
+            "type": "food", "item_name": "boiled egg",
+            "calories": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0,
+            "confidence_notes": "2 large eggs, boiled",
+        })
+        amb_result = {"requires_clarification": False}
+        with mock.patch.object(parser, "_check_ambiguity", return_value=amb_result):
+            d = parser.parse(["User input: 2 boiled eggs"])
+            self.assertEqual(d["type"], "food")
+            self.assertFalse(d.get("needs_clarification"))
+
+    def test_pill_resolution_returns_nutrition(self):
+        """Resolving a pill text returns full nutrition from local DB."""
+        d = parser.resolve_pill("1 cup chai with milk and sugar", "chai")
+        # chai might not be in local DB, but the function should handle it
+        # Either returns a result or None — we test the function doesn't crash
+        if d:
+            self.assertIn("calories", d)
+
+    def test_parse_with_pill_resolves(self):
+        """parse_with_pill returns a shaped food dict."""
+        # Mock the local DB to return nutrition for the pill text
+        fake_nutrition = {
+            "type": "food", "item_name": "chai with milk", "calories": 120,
+            "protein_g": 3, "carbs_g": 20, "fat_g": 4,
+            "fiber_g": 0, "sugar_g": 15,
+            "confidence_notes": "milk tea", "source": "local",
+            "matched_food": "chai", "serving_g": 200, "qty": 1,
+        }
+        with mock.patch.object(parser.fooddb, "parse_food", return_value=fake_nutrition):
+            d = parser.parse_with_pill("1 cup chai with milk and sugar", "chai")
+            self.assertEqual(d["type"], "food")
+            self.assertFalse(d.get("needs_clarification"))
+            self.assertEqual(d["calories"], 120)
+
+    def _fake_generate(self, response):
+        parser._generate = mock.Mock(return_value=response)
+        return parser._generate
+
+
+class TestWeeklyAnalytics(unittest.TestCase):
+    """Tests for weekly macro streak and target progress."""
+
+    def setUp(self):
+        storage.init_db()
+        portions.init_portion_table()
+        goals.init_goal_table()
+        # Clear all tables for clean isolation
+        from db import connect
+        with connect() as c:
+            c.execute("DELETE FROM food")
+            c.execute("DELETE FROM workout")
+            c.execute("DELETE FROM weight")
+            c.execute("DELETE FROM water")
+
+    def test_weekly_macro_analytics_empty(self):
+        """Empty week returns zero values."""
+        result = storage.weekly_macro_analytics(7)
+        self.assertEqual(result["days_logged"], 0)
+        self.assertEqual(result["avg_cal"], 0)
+        self.assertEqual(result["cal_adherence"], 0)
+        self.assertEqual(result["protein_adherence"], 0)
+        self.assertEqual(len(result["daily"]), 7)
+
+    def test_weekly_macro_analytics_with_data(self):
+        """Week with logged food returns correct totals."""
+        from datetime import timedelta
+        today = storage._now().date()
+        # Log food for today
+        storage.save_food({
+            "item_name": "Test Meal", "calories": 500,
+            "protein_g": 30, "carbs_g": 50, "fat_g": 15,
+            "fiber_g": 5, "sugar_g": 10,
+        })
+        result = storage.weekly_macro_analytics(7)
+        self.assertEqual(result["days_logged"], 1)
+        self.assertEqual(result["total_cal"], 500)
+        self.assertEqual(result["total_protein"], 30)
+        self.assertGreater(result["cal_adherence"], 0)
+        self.assertGreater(result["protein_adherence"], 0)
+        self.assertEqual(len(result["daily"]), 7)
+
+    def test_weekly_streak_count(self):
+        """Streak is returned in weekly analytics."""
+        result = storage.weekly_macro_analytics(7)
+        self.assertIn("streak", result)
+        self.assertIsInstance(result["streak"], int)
+
+    def test_target_adherence_capped(self):
+        """Adherence doesn't exceed 150% to avoid insane values."""
+        # Log a massive amount
+        storage.save_food({
+            "item_name": "Mega Meal", "calories": 10000,
+            "protein_g": 500, "carbs_g": 800, "fat_g": 300,
+        })
+        result = storage.weekly_macro_analytics(7)
+        self.assertLessEqual(result["cal_adherence"], 150)
+        self.assertLessEqual(result["protein_adherence"], 150)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, date
 
 import config
 import db
+import goals
 
 
 def _conn():
@@ -323,6 +324,76 @@ def analytics(days_back=30):
         "total_workouts": total_workouts,
         "streak": current_streak(),
         "days_back": days_back,
+    }
+
+
+def weekly_macro_analytics(days_back=7):
+    """Daily breakdown of calories, protein, carbs, fat for the last N days,
+    plus target adherence percentages and consecutive logging streak."""
+    today = _now().date()
+    start = (today - timedelta(days=days_back - 1)).isoformat()
+
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT day, SUM(calories) cal, SUM(protein_g) p, "
+            "SUM(carbs_g) cb, SUM(fat_g) ft, COUNT(*) n "
+            "FROM food WHERE day>=? GROUP BY day ORDER BY day", (start,)
+        ).fetchall()
+
+    # Build continuous axis
+    axis = [(today - timedelta(days=i)).isoformat() for i in range(days_back - 1, -1, -1)]
+    row_map = {r["day"]: r for r in rows}
+
+    daily = []
+    for d in axis:
+        r = row_map.get(d)
+        daily.append({
+            "day": d,
+            "calories": r["cal"] if r else 0,
+            "protein": r["p"] if r else 0,
+            "carbs": r["cb"] if r else 0,
+            "fat": r["ft"] if r else 0,
+            "logged": (r["n"] if r else 0) > 0,
+        })
+
+    # Totals and averages
+    logged_days = [d for d in daily if d["logged"]]
+    total_cal = sum(d["calories"] for d in daily)
+    total_protein = sum(d["protein"] for d in daily)
+    total_carbs = sum(d["carbs"] for d in daily)
+    total_fat = sum(d["fat"] for d in daily)
+    avg_cal = round(total_cal / len(logged_days)) if logged_days else 0
+    avg_protein = round(total_protein / len(logged_days)) if logged_days else 0
+
+    # Target adherence
+    t = goals.current_targets()
+    cal_target = (t["calories"] if t else config.DAILY_CAL_TARGET) or 2000
+    protein_target = (t["protein"] if t else config.DAILY_PROTEIN_TARGET) or 150
+    days_with_cal_target = len([d for d in daily if d["logged"]])
+    cal_adherence = 0
+    protein_adherence = 0
+    if days_with_cal_target > 0 and cal_target > 0:
+        cal_adherence = round(
+            min(total_cal / (cal_target * days_with_cal_target), 1.5) * 100)
+    if days_with_cal_target > 0 and protein_target > 0:
+        protein_adherence = round(
+            min(total_protein / (protein_target * days_with_cal_target), 1.5) * 100)
+
+    return {
+        "daily": daily,
+        "total_cal": total_cal,
+        "total_protein": total_protein,
+        "total_carbs": total_carbs,
+        "total_fat": total_fat,
+        "avg_cal": avg_cal,
+        "avg_protein": avg_protein,
+        "cal_target": cal_target,
+        "protein_target": protein_target,
+        "cal_adherence": cal_adherence,
+        "protein_adherence": protein_adherence,
+        "days_logged": len(logged_days),
+        "days_total": days_back,
+        "streak": current_streak(),
     }
 
 

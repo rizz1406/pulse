@@ -88,11 +88,16 @@ def me():
 @app.route("/api/log", methods=["POST"])
 @login_required
 def log():
-    """Accept text or audio/image, parse, and return a preview (not yet saved)."""
+    """Accept text or audio/image, parse, and return a preview (not yet saved).
+    If skip_clarification is set, bypass clarification and log immediately
+    using the default_fallback pill text."""
     payload = []
     raw = ""
+    skip_clarify = False
     if request.is_json:
-        text = (request.get_json(force=True).get("text") or "").strip()
+        body = request.get_json(force=True)
+        text = (body.get("text") or "").strip()
+        skip_clarify = bool(body.get("skip_clarification"))
         if not text:
             return jsonify({"error": "empty"}), 400
         payload.append(f"User input: {text}")
@@ -117,7 +122,38 @@ def log():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+    # If skip_clarification and the result has a default_fallback, resolve it now
+    if skip_clarify and result.get("default_fallback"):
+        try:
+            resolved = parser.parse_with_pill(
+                result["default_fallback"], result.get("item_name", ""))
+            if resolved and resolved.get("calories", 0) > 0:
+                resolved["needs_clarification"] = False
+                resolved["_raw"] = raw
+                return jsonify(resolved)
+        except Exception:
+            pass  # fall through to return the clarification response
+
     result["_raw"] = raw
+    return jsonify(result)
+
+
+@app.route("/api/pill", methods=["POST"])
+@login_required
+def pill():
+    """Resolve a clarification pill selection to full nutrition."""
+    d = request.get_json(force=True)
+    pill_text = d.get("pill_text", "")
+    food_name = d.get("food_name", "")
+    if not pill_text:
+        return jsonify({"error": "missing pill_text"}), 400
+    try:
+        result = parser.parse_with_pill(pill_text, food_name)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    if not result or result.get("calories", 0) == 0:
+        return jsonify({"error": "Could not find nutrition for this option"}), 404
+    result["needs_clarification"] = False
     return jsonify(result)
 
 
@@ -332,6 +368,13 @@ def export_data():
 def analytics():
     days = _days_arg(30)
     return jsonify(storage.analytics(days))
+
+
+@app.route("/api/analytics/weekly")
+@login_required
+def analytics_weekly():
+    """Weekly macro streak & target progress — 7-day breakdown."""
+    return jsonify(storage.weekly_macro_analytics(7))
 
 
 # ─────────────────────────────────────────────────────────────

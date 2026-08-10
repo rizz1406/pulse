@@ -77,6 +77,36 @@ UNIFIED_PROMPT = (
     "user's language, gently steering them back to logging meals or workouts."
 )
 
+# ─────────────────────────────────────────────────────────────
+# Ambiguity-check prompt — sent AFTER classification for foods
+# that hit Groq (unknown to local DB). Determines if the food
+# is ambiguous enough to need clarification pills.
+# ─────────────────────────────────────────────────────────────
+AMBIGUITY_PROMPT = (
+    "You are a nutrition clarity assistant. Given a food name and the user's "
+    "original input, decide if this food is AMBIGUOUS (high calorie variance "
+    "depending on preparation) or UNAMBIGUOUS (calorie-stable regardless of "
+    "how it's made).\n\n"
+    "UNAMBIGUOUS examples: '2 boiled eggs', '100g chicken breast', "
+    "'1 banana', '1 cup rice' — these have a narrow calorie range "
+    "(±15%). Return requires_clarification=false.\n\n"
+    "AMBIGUOUS examples: 'chai' (milk/sugar varies wildly), "
+    "'masala omelette' (oil/ingredients vary), 'egg curry' (gravy richness), "
+    "'biryani' (oil/ghee/portion). Return requires_clarification=true with "
+    "2-4 pills representing the most common preparations.\n\n"
+    "Each pill MUST have:\n"
+    "- label: short display name (e.g. 'Milk + 1 tsp Sugar')\n"
+    "- text: full descriptive input for DB lookup (e.g. '1 cup chai with "
+    "whole milk and 1 tsp sugar')\n\n"
+    "Return JSON:\n"
+    "{\n"
+    '  "requires_clarification": true/false,\n'
+    '  "question": "How was your {food} prepared?",\n'
+    '  "pills": [{"label": "...", "text": "..."}, ...],\n'
+    '  "default_fallback": "text of the most common/default pill"\n'
+    "}"
+)
+
 
 def _to_parts(payload, prompt):
     """Convert payload into OpenAI chat content parts, with the prompt first."""
@@ -143,6 +173,54 @@ def _generate(payload, prompt):
         return {"type": "chat", "error": "AI returned unparseable output — try again."}
 
 
+def _check_ambiguity(food_name, user_text):
+    """Ask Groq if this food is ambiguous enough to need clarification pills.
+    Returns a dict with requires_clarification, question, pills, default_fallback."""
+    prompt = AMBIGUITY_PROMPT
+    payload = [f"Food: {food_name}\nUser input: {user_text}"]
+    messages = [{"role": "user", "content": _to_parts(payload, prompt)}]
+    try:
+        response = _get_client().chat.completions.create(
+            model=GROQ_MODEL,
+            messages=messages,
+            temperature=0.2,
+            response_format={"type": "json_object"},
+        )
+        text = response.choices[0].message.content or "{}"
+        result = json.loads(text)
+    except Exception:
+        return {"requires_clarification": False}
+    # Validate shape
+    if not isinstance(result, dict):
+        return {"requires_clarification": False}
+    result.setdefault("requires_clarification", False)
+    result.setdefault("question", "")
+    result.setdefault("pills", [])
+    result.setdefault("default_fallback", "")
+    # Ensure pills is a list of {label, text} dicts
+    clean_pills = []
+    for p in result.get("pills", []):
+        if isinstance(p, dict) and "label" in p and "text" in p:
+            clean_pills.append({"label": p["label"], "text": p["text"]})
+    result["pills"] = clean_pills
+    return result
+
+
+def resolve_pill(pill_text, food_name=""):
+    """Resolve a pill selection to full nutrition by looking up the pill text
+    in the local DB / FatSecret. Returns a shaped food dict or None."""
+    # First try the pill text directly (it's a descriptive string)
+    result = fooddb.parse_food(pill_text)
+    if result:
+        return result
+    # Try combining food name + pill text
+    combined = f"{food_name} {pill_text}"
+    result = fooddb.parse_food(combined)
+    if result:
+        return result
+    return None
+
+
 def _int(v):
     try:
         return int(float(v))
@@ -157,15 +235,15 @@ def _float(v):
         return 0.0
 
 
-def _shape_food(d, allow_clarify=True, audit=None):
+def _shape_food(d, allow_clarify=True, audit=None, pills=None, default_fallback=""):
     """Shape a food result dict. If audit is provided, use it for nutrition
-    (Gemini's values are ignored — the database is the source of truth)."""
+    (Groq's values are ignored — the database is the source of truth)."""
     if audit:
         # Use the database lookup result as the source of truth
         return audit
 
     # Fallback: if we somehow got here without a database lookup,
-    # use Gemini's values but log a warning
+    # use Groq's values but log a warning
     cal = _int(d.get("calories"))
     p = _int(d.get("protein_g"))
     cb = _int(d.get("carbs_g"))
@@ -175,7 +253,7 @@ def _shape_food(d, allow_clarify=True, audit=None):
     if cal == 0 and macro_cal > 0:
         cal = macro_cal
 
-    return {
+    result = {
         "type": "food",
         "item_name": d.get("item_name") or "Unknown meal",
         "calories": cal, "protein_g": p, "carbs_g": cb, "fat_g": ft,
@@ -184,11 +262,17 @@ def _shape_food(d, allow_clarify=True, audit=None):
         "needs_clarification": bool(d.get("needs_clarification")) and allow_clarify,
         "clarify_question": d.get("clarify_question", "") if allow_clarify else "",
         "clarify_options": d.get("clarify_options", []) if allow_clarify else [],
-        "source": "gemini_fallback",
+        "source": "groq_fallback",
         "matched_food": d.get("item_name", ""),
         "serving_g": 0,
         "qty": 1,
     }
+    # New pills-based clarification
+    if pills and allow_clarify:
+        result["pills"] = pills
+        result["default_fallback"] = default_fallback
+        result["needs_clarification"] = True
+    return result
 
 
 def parse(payload):
@@ -215,16 +299,24 @@ def parse(payload):
     kind = d.get("type", "chat")
 
     if kind == "food":
-        # Gemini identified the food but didn't give nutrition (we told it not to).
+        # Groq identified the food but didn't give nutrition (we told it not to).
         # Try to look it up in the database using the identified food name.
         food_name = d.get("item_name", "")
         audit = fooddb.parse_food(food_name) if food_name else None
 
-        # If Gemini gave specific portion info in confidence_notes, try to
+        # If Groq gave specific portion info in confidence_notes, try to
         # reconstruct a more specific query
         if not audit and food_name:
-            # Try the original text with the Gemini-identified name
+            # Try the original text with the Groq-identified name
             audit = fooddb.parse_food(text_bits)
+
+        # If no local match, check ambiguity for clarification pills
+        if not audit and food_name:
+            amb = _check_ambiguity(food_name, text_bits)
+            if amb.get("requires_clarification") and amb.get("pills"):
+                return _shape_food(d, allow_clarify=True, audit=None,
+                                   pills=amb["pills"],
+                                   default_fallback=amb.get("default_fallback", ""))
 
         return _shape_food(d, allow_clarify=True, audit=audit)
 
@@ -268,3 +360,14 @@ def reparse_food_with_answer(original_text, question, answer, clarify_round=1):
     combined = (f"User input: {original_text}\n"
                 f"Clarification — {question} Answer: {answer}")
     return parse_food([combined], clarify_round=clarify_round)
+
+
+def parse_with_pill(pill_text, food_name=""):
+    """Resolve a pill selection to full nutrition. Called when user taps a pill.
+    Returns a shaped food dict with nutrition from local DB / FatSecret."""
+    audit = resolve_pill(pill_text, food_name)
+    if audit:
+        audit["needs_clarification"] = False
+        return audit
+    # Fallback: ask Groq to parse the pill text as food
+    return parse([f"User input: {pill_text}"])
