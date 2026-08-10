@@ -82,7 +82,7 @@ UNIFIED_PROMPT = (
     "IF weight: fill weight_kg (number, convert from lbs if needed) and notes.\n\n"
     "IF chat: fill 'reply' with one or two short, warm sentences matching the "
     "user's language, gently steering them back to logging meals or workouts.\n\n"
-    "Return valid JSON."
+    "Return valid JSON. All keys MUST be lowercase (e.g. 'type', 'item_name', 'calories')."
 )
 
 # ─────────────────────────────────────────────────────────────
@@ -180,7 +180,7 @@ def _generate(payload, prompt):
         except Exception as e:
             return {"type": "chat", "error": f"Photo analysis failed — try again ({e})"}
         try:
-            return json.loads(text)
+            return _norm_keys(json.loads(text))
         except (json.JSONDecodeError, TypeError):
             return {"type": "chat", "error": "Photo analysis returned unparseable output — try again."}
 
@@ -221,7 +221,7 @@ def _generate(payload, prompt):
             return {"type": "chat", "error": "Network hiccup — try again"}
         return {"type": "chat", "error": f"AI error: {e}"}
     try:
-        return json.loads(text)
+        return _norm_keys(json.loads(text))
     except (json.JSONDecodeError, TypeError):
         return {"type": "chat", "error": "AI returned unparseable output — try again."}
 
@@ -240,7 +240,7 @@ def _check_ambiguity(food_name, user_text):
             response_format={"type": "json_object"},
         )
         text = response.choices[0].message.content or "{}"
-        result = json.loads(text)
+        result = _norm_keys(json.loads(text))
     except Exception:
         return {"requires_clarification": False}
     # Validate shape
@@ -277,6 +277,14 @@ def _float(v):
 def _has_macros(d):
     """True when the AI provided a usable nutrition estimate."""
     return any(_int(d.get(k)) > 0 for k in ("calories", "protein_g", "carbs_g", "fat_g"))
+
+
+def _norm_keys(d):
+    """Normalize AI response keys to lowercase. Groq sometimes returns
+    'TYPE' instead of 'type', 'ITEM_NAME' instead of 'item_name', etc."""
+    if not isinstance(d, dict):
+        return d
+    return {k.lower(): v for k, v in d.items()}
 
 
 def _shape_food(d, allow_clarify=True, pills=None, default_fallback="",

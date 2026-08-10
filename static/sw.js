@@ -1,4 +1,4 @@
-const CACHE = 'pulse-v3';
+const CACHE = 'pulse-v4';
 const ASSETS = [
   '/',
   '/style.css',
