@@ -24,7 +24,7 @@ _REAL_GENERATE = parser._generate
 
 
 class TestParser(unittest.TestCase):
-    """Parser logic with the Gemini client mocked out — no key needed."""
+    """Parser logic with the AI client mocked out — no key needed."""
 
     def setUp(self):
         storage.init_db()
@@ -34,86 +34,46 @@ class TestParser(unittest.TestCase):
         parser._generate = mock.Mock(return_value=response)
         return parser._generate
 
-    def test_parse_food_local_takes_precedence(self):
-        """Local DB parse takes precedence over Gemini for known foods."""
+    def test_parse_food_ai_estimates(self):
+        """AI-estimated food returns nutrition from the model."""
+        self._fake_generate({
+            "type": "food", "item_name": "2 boiled eggs",
+            "calories": 144, "protein_g": 12, "carbs_g": 0, "fat_g": 10,
+            "confidence_notes": "2 large eggs, boiled",
+        })
         d = parser.parse(["2 boiled eggs"])
         self.assertEqual(d["type"], "food")
-        self.assertEqual(d["source"], "local")
+        self.assertEqual(d["source"], "ai_estimate")
         self.assertEqual(d["calories"], 144)
-        self.assertEqual(d["protein_g"], 12)
 
-    def test_parse_food_falls_back_to_gemini_for_unknown(self):
-        """Unknown food goes to Gemini for classification."""
+    def test_parse_food_zero_macros_goes_to_fallback(self):
+        """Unknown food + no AI macros → groq_fallback source."""
         self._fake_generate({
             "type": "food", "item_name": "Quinoa Salad",
             "calories": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0,
             "confidence_notes": "Mixed grain salad with vegetables",
         })
-        with mock.patch.object(parser.fooddb, "parse_food", return_value=None):
-            d = parser.parse(["User input: quinoa salad"])
-            self.assertEqual(d["type"], "food")
-            # Gemini returned 0 calories — no DB lookup succeeded
-            self.assertEqual(d["calories"], 0)
-            self.assertEqual(d["source"], "groq_fallback")
-
-    def test_parse_food_gemini_with_db_lookup(self):
-        """Gemini classifies, then DB provides nutrition."""
-        self._fake_generate({
-            "type": "food", "item_name": "boiled egg",
-            "calories": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0,
-            "confidence_notes": "2 large eggs, boiled",
-        })
-        # Don't mock fooddb.parse_food — let it do the real lookup
-        d = parser.parse(["User input: 2 boiled eggs"])
+        d = parser.parse(["User input: quinoa salad"])
         self.assertEqual(d["type"], "food")
-        self.assertEqual(d["calories"], 144)
-        self.assertEqual(d["source"], "local")
+        self.assertEqual(d["calories"], 0)
+        self.assertEqual(d["source"], "groq_fallback")
 
-    def test_shape_food_returns_audit_when_provided(self):
-        """_shape_food uses audit dict when provided (DB result)."""
-        audit = {
-            "type": "food", "item_name": "Test", "calories": 200,
-            "protein_g": 15, "carbs_g": 20, "fat_g": 8,
-            "fiber_g": 0, "sugar_g": 0, "confidence_notes": "test",
-            "needs_clarification": False, "clarify_question": "",
-            "clarify_options": [], "source": "local",
-            "matched_food": "test", "serving_g": 100, "qty": 1,
-        }
-        d = parser._shape_food({}, allow_clarify=True, audit=audit)
-        self.assertEqual(d, audit)
-
-    def test_shape_food_fallback_without_audit(self):
-        """_shape_food falls back to Gemini values when no audit."""
+    def test_shape_food_uses_ai_macros(self):
+        """_shape_food uses AI macros when no audit provided."""
         d = parser._shape_food({
             "item_name": "Salad", "calories": 0,
             "protein_g": 10, "carbs_g": 20, "fat_g": 5,
-        }, allow_clarify=True, audit=None)
+        }, allow_clarify=True)
         self.assertEqual(d["calories"], 10 * 4 + 20 * 4 + 5 * 9)
 
-    def test_parse_food_known_db_skips_clarification(self):
-        """Hybrid: DB-known food (biryani) uses exact DB values, no pills."""
-        self._fake_generate({
-            "type": "food", "item_name": "Biryani", "calories": 0,
-            "protein_g": 0, "carbs_g": 0, "fat_g": 0,
-            "needs_clarification": True, "clarify_question": "How oily?",
-            "clarify_options": ["Light", "Medium", "Rich"],
-        })
-        # No fooddb mock — parse_local finds "biryani" in the local DB.
-        d = parser.parse(["User input: biryani"])
-        self.assertEqual(d["type"], "food")
-        self.assertEqual(d["source"], "local")
-        self.assertEqual(d["calories"], 450)  # 180 × 2.5 (default serving)
-        self.assertFalse(d["needs_clarification"])
-
-    def test_parse_food_legacy_clarify_options_kept(self):
-        """Unknown food + no estimate → legacy clarify_options still surface."""
+    def test_parse_food_ai_with_pills(self):
+        """Food with no macros + ambiguity check returns pills."""
         self._fake_generate({
             "type": "food", "item_name": "Pav Bhaji", "calories": 0,
             "needs_clarification": True, "clarify_question": "How much butter?",
             "clarify_options": ["Lite", "Regular", "Extra butter"],
         })
-        with mock.patch.object(parser.fooddb, "parse_food", return_value=None), \
-             mock.patch.object(parser, "_check_ambiguity",
+        with mock.patch.object(parser, "_check_ambiguity",
                                return_value={"requires_clarification": False}):
             d = parser.parse(["User input: pav bhaji"])
         self.assertEqual(d["type"], "food")
@@ -128,8 +88,7 @@ class TestParser(unittest.TestCase):
             "carbs_g": 8, "fat_g": 12,
             "serving_note": "2 medium kebabs, pan-tossed",
         })
-        with mock.patch.object(parser.fooddb, "parse_food", return_value=None), \
-             mock.patch.object(parser, "_check_ambiguity") as amb:
+        with mock.patch.object(parser, "_check_ambiguity") as amb:
             d = parser.parse(["User input: shami kabab"])
         self.assertEqual(d["type"], "food")
         self.assertEqual(d["source"], "ai_estimate")
@@ -140,28 +99,24 @@ class TestParser(unittest.TestCase):
     def test_parse_workout(self):
         self._fake_generate({"type": "workout", "exercise_name": "Bench Press",
                              "weight_kg": 60, "sets": 3, "reps": 8, "notes": ""})
-        with mock.patch.object(parser.fooddb, "parse_food", return_value=None):
-            d = parser.parse(["User input: bench pressed"])
+        d = parser.parse(["User input: bench pressed"])
         self.assertEqual(d["exercise_name"], "Bench Press")
         self.assertEqual(d["sets"], 3)
 
     def test_parse_weight_float(self):
         self._fake_generate({"type": "weight", "weight_kg": 76.4, "notes": ""})
-        with mock.patch.object(parser.fooddb, "parse_food", return_value=None):
-            d = parser.parse(["User input: I weigh 76.4"])
+        d = parser.parse(["User input: I weigh 76.4"])
         self.assertAlmostEqual(d["weight_kg"], 76.4)
 
     def test_parse_water(self):
         self._fake_generate({"type": "water", "ml": 2000})
-        with mock.patch.object(parser.fooddb, "parse_food", return_value=None):
-            d = parser.parse(["User input: drank 2 litre paani"])
+        d = parser.parse(["User input: drank 2 litre paani"])
         self.assertEqual(d["type"], "water")
         self.assertEqual(d["ml"], 2000)
 
     def test_parse_chat_fallback(self):
         self._fake_generate({"type": "chat", "reply": "Nice! Log a meal?"})
-        with mock.patch.object(parser.fooddb, "parse_food", return_value=None):
-            d = parser.parse(["User input: hello"])
+        d = parser.parse(["User input: hello"])
         self.assertEqual(d["type"], "chat")
         self.assertIn("Log a meal", d["reply"])
 
@@ -190,6 +145,10 @@ class TestParser(unittest.TestCase):
 
     def test_audit_fields_present_on_food_result(self):
         """All food results have audit trail fields."""
+        self._fake_generate({
+            "type": "food", "item_name": "2 eggs", "calories": 144,
+            "protein_g": 12, "carbs_g": 0, "fat_g": 10,
+        })
         d = parser.parse(["2 boiled eggs"])
         self.assertIn("source", d)
         self.assertIn("matched_food", d)
@@ -247,7 +206,8 @@ class TestParser(unittest.TestCase):
 
 
 class TestServingConversion(unittest.TestCase):
-    """Verify that serving-based calculations are correct across the board."""
+    """Verify that serving-based calculations are correct across the board.
+    These test the fooddb module directly (still used for barcode)."""
 
     def test_egg_serving_size(self):
         """Large egg = 50g, 72 kcal (USDA)."""
@@ -314,22 +274,28 @@ class TestAmbiguityCheck(unittest.TestCase):
         storage.init_db()
         portions.init_portion_table()
 
+    def _fake_generate(self, response):
+        parser._generate = mock.Mock(return_value=response)
+        return parser._generate
+
     def test_unambiguous_food_skips_clarification(self):
-        """Local DB match bypasses ambiguity check entirely."""
+        """Food with macros from AI skips ambiguity check."""
+        self._fake_generate({
+            "type": "food", "item_name": "2 boiled eggs",
+            "calories": 144, "protein_g": 12, "carbs_g": 0, "fat_g": 10,
+        })
         d = parser.parse(["2 boiled eggs"])
         self.assertEqual(d["type"], "food")
         self.assertFalse(d.get("needs_clarification", False))
-        self.assertEqual(d["source"], "local")
+        self.assertEqual(d["source"], "ai_estimate")
 
     def test_ambiguous_food_returns_pills(self):
-        """Ambiguous food (not in local DB) returns pills from ambiguity check."""
-        # Mock the classification to return an unknown food
+        """Ambiguous food with no macros returns pills from ambiguity check."""
         self._fake_generate({
             "type": "food", "item_name": "chai",
             "calories": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0,
             "confidence_notes": "Indian tea",
         })
-        # Mock ambiguity check to return pills
         amb_result = {
             "requires_clarification": True,
             "question": "How was your chai prepared?",
@@ -339,9 +305,7 @@ class TestAmbiguityCheck(unittest.TestCase):
             ],
             "default_fallback": "1 cup chai with milk and sugar",
         }
-        with mock.patch.object(parser.fooddb, "parse_local", return_value=None), \
-             mock.patch.object(parser.fooddb, "parse_food", return_value=None), \
-             mock.patch.object(parser, "_check_ambiguity", return_value=amb_result):
+        with mock.patch.object(parser, "_check_ambiguity", return_value=amb_result):
             d = parser.parse(["User input: chai"])
             self.assertEqual(d["type"], "food")
             self.assertTrue(d.get("needs_clarification"))
@@ -351,11 +315,10 @@ class TestAmbiguityCheck(unittest.TestCase):
             self.assertIn("default_fallback", d)
 
     def test_unambiguous_groq_food_skips_pills(self):
-        """Unambiguous food from Groq skips pills and goes to DB."""
+        """Unambiguous food from Groq skips pills."""
         self._fake_generate({
             "type": "food", "item_name": "boiled egg",
-            "calories": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0,
-            "confidence_notes": "2 large eggs, boiled",
+            "calories": 144, "protein_g": 12, "carbs_g": 0, "fat_g": 10,
         })
         amb_result = {"requires_clarification": False}
         with mock.patch.object(parser, "_check_ambiguity", return_value=amb_result):
@@ -363,33 +326,15 @@ class TestAmbiguityCheck(unittest.TestCase):
             self.assertEqual(d["type"], "food")
             self.assertFalse(d.get("needs_clarification"))
 
-    def test_pill_resolution_returns_nutrition(self):
-        """Resolving a pill text returns full nutrition from local DB."""
-        d = parser.resolve_pill("1 cup chai with milk and sugar", "chai")
-        # chai might not be in local DB, but the function should handle it
-        # Either returns a result or None — we test the function doesn't crash
-        if d:
-            self.assertIn("calories", d)
-
-    def test_parse_with_pill_resolves(self):
-        """parse_with_pill returns a shaped food dict."""
-        # Mock the local DB to return nutrition for the pill text
-        fake_nutrition = {
+    def test_parse_with_pill_resolves_via_ai(self):
+        """parse_with_pill returns a shaped food dict via AI."""
+        self._fake_generate({
             "type": "food", "item_name": "chai with milk", "calories": 120,
             "protein_g": 3, "carbs_g": 20, "fat_g": 4,
-            "fiber_g": 0, "sugar_g": 15,
-            "confidence_notes": "milk tea", "source": "local",
-            "matched_food": "chai", "serving_g": 200, "qty": 1,
-        }
-        with mock.patch.object(parser.fooddb, "parse_food", return_value=fake_nutrition):
-            d = parser.parse_with_pill("1 cup chai with milk and sugar", "chai")
-            self.assertEqual(d["type"], "food")
-            self.assertFalse(d.get("needs_clarification"))
-            self.assertEqual(d["calories"], 120)
-
-    def _fake_generate(self, response):
-        parser._generate = mock.Mock(return_value=response)
-        return parser._generate
+        })
+        d = parser.parse_with_pill("1 cup chai with milk and sugar", "chai")
+        self.assertEqual(d["type"], "food")
+        self.assertEqual(d["calories"], 120)
 
 
 class TestWeeklyAnalytics(unittest.TestCase):
@@ -399,7 +344,6 @@ class TestWeeklyAnalytics(unittest.TestCase):
         storage.init_db()
         portions.init_portion_table()
         goals.init_goal_table()
-        # Clear all tables for clean isolation
         from db import connect
         with connect() as c:
             c.execute("DELETE FROM food")
@@ -408,7 +352,6 @@ class TestWeeklyAnalytics(unittest.TestCase):
             c.execute("DELETE FROM water")
 
     def test_weekly_macro_analytics_empty(self):
-        """Empty week returns zero values."""
         result = storage.weekly_macro_analytics(7)
         self.assertEqual(result["days_logged"], 0)
         self.assertEqual(result["avg_cal"], 0)
@@ -417,10 +360,8 @@ class TestWeeklyAnalytics(unittest.TestCase):
         self.assertEqual(len(result["daily"]), 7)
 
     def test_weekly_macro_analytics_with_data(self):
-        """Week with logged food returns correct totals."""
         from datetime import timedelta
         today = storage._now().date()
-        # Log food for today
         storage.save_food({
             "item_name": "Test Meal", "calories": 500,
             "protein_g": 30, "carbs_g": 50, "fat_g": 15,
@@ -435,14 +376,11 @@ class TestWeeklyAnalytics(unittest.TestCase):
         self.assertEqual(len(result["daily"]), 7)
 
     def test_weekly_streak_count(self):
-        """Streak is returned in weekly analytics."""
         result = storage.weekly_macro_analytics(7)
         self.assertIn("streak", result)
         self.assertIsInstance(result["streak"], int)
 
     def test_target_adherence_capped(self):
-        """Adherence doesn't exceed 150% to avoid insane values."""
-        # Log a massive amount
         storage.save_food({
             "item_name": "Mega Meal", "calories": 10000,
             "protein_g": 500, "carbs_g": 800, "fat_g": 300,
@@ -458,7 +396,6 @@ class TestVisionModel(unittest.TestCase):
     def setUp(self):
         storage.init_db()
         portions.init_portion_table()
-        # Save the real _generate in case earlier tests left it mocked
         self._orig_generate = parser._generate
         parser._generate = _REAL_GENERATE
 
@@ -530,13 +467,12 @@ class TestVisionModel(unittest.TestCase):
         self.assertEqual(called_with["model"], parser.GROQ_MODEL)
 
     def test_photo_flow_returns_food_with_pills(self):
-        """Photo payload → Groq identifies food → pills returned."""
+        """Photo payload → AI identifies food → pills returned."""
         image_payload = [
             {"mime_type": "image/jpeg", "data": b"\x89PNG fake image data"},
         ]
         with mock.patch.object(parser, "_generate") as mock_gen, \
-             mock.patch.object(parser, "_check_ambiguity") as mock_amb, \
-             mock.patch.object(fooddb, "parse_food", return_value=None):
+             mock.patch.object(parser, "_check_ambiguity") as mock_amb:
             mock_gen.return_value = {
                 "type": "food",
                 "item_name": "Masala Omelette",
@@ -557,40 +493,13 @@ class TestVisionModel(unittest.TestCase):
         self.assertTrue(result.get("needs_clarification"))
         self.assertEqual(len(result["pills"]), 2)
 
-    def test_photo_flow_uses_local_db_when_identified(self):
-        """Photo: Gemini identifies a known food → local DB nutrition, no pills."""
-        image_payload = [
-            {"mime_type": "image/jpeg", "data": b"\x89PNG fake image data"},
-        ]
-        fake_audit = {"type": "food", "item_name": "Chicken Biryani",
-                      "calories": 450, "protein_g": 20, "carbs_g": 60,
-                      "fat_g": 15, "source": "local",
-                      "matched_food": "chicken biryani"}
-        with mock.patch.object(parser, "_generate") as mock_gen, \
-             mock.patch.object(parser, "_check_ambiguity") as mock_amb, \
-             mock.patch.object(fooddb, "parse_food", return_value=fake_audit):
-            mock_gen.return_value = {
-                "type": "food",
-                "item_name": "Chicken Biryani",
-                "quantity": 1,
-                "unit": "plate",
-            }
-            result = parser.parse(image_payload)
-        mock_gen.assert_called_once()
-        mock_amb.assert_not_called()
-        self.assertEqual(result["type"], "food")
-        self.assertEqual(result["source"], "local")
-        self.assertGreater(result["calories"], 0)
-        self.assertEqual(result["matched_food"], "chicken biryani")
-
     def test_photo_flow_ambiguity_for_unknown_food(self):
         """Photo: unknown dish → ambiguity pills for user confirmation."""
         image_payload = [
             {"mime_type": "image/jpeg", "data": b"\x89PNG fake image data"},
         ]
         with mock.patch.object(parser, "_generate") as mock_gen, \
-             mock.patch.object(parser, "_check_ambiguity") as mock_amb, \
-             mock.patch.object(fooddb, "parse_food", return_value=None):
+             mock.patch.object(parser, "_check_ambiguity") as mock_amb:
             mock_gen.return_value = {
                 "type": "food",
                 "item_name": "Mother's Special Curry",

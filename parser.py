@@ -1,17 +1,10 @@
 """
-Parsing engine — multi-tier classification + extraction.
+Parsing engine — AI-first classification + extraction.
 Handles food, workout, weight logging, water, and off-topic chat.
 Understands casual and Hinglish input.
 
-Hybrid food parsing:
-  1. Local food database — exact nutrition for ~150 common foods, instant & free
-  2. Groq AI — estimates macros for anything the DB doesn't know
-     (e.g. "2 banana and 2 omelette" when parts aren't in the DB). The
-     estimate is shown to the user for confirmation before logging.
-  3. Photos go to Gemini vision (Groq has no vision model).
-
-The local DB is authoritative when it matches — the AI never re-maps known
-foods. Unknown foods get an AI estimate, not a dead-end or a wrong DB match.
+All food recognition and nutrition estimation is handled by Groq AI.
+Photos go to Gemini vision (Groq has no vision model).
 """
 
 import base64
@@ -20,7 +13,6 @@ import openai
 from openai import OpenAI
 import config
 import portions
-import fooddb
 
 # Lazy client — created on first use, not at import time.
 _client = None
@@ -52,10 +44,9 @@ def _get_client():
     return _client
 
 # ─────────────────────────────────────────────────────────────
-# Groq prompt — classifies input and gives nutrition ESTIMATES for
-# foods that aren't in the local DB. The local DB always overrides
-# (it's authoritative). Estimates are shown to the user for confirmation,
-# so the AI is a suggestion followed by an explicit "Log it" tap.
+# Groq prompt — classifies input and gives nutrition estimates.
+# All food recognition is AI-driven (no local DB override).
+# Estimates are shown to the user for confirmation before logging.
 # ─────────────────────────────────────────────────────────────
 UNIFIED_PROMPT = (
     "You are the engine of a personal health tracker. Read the input (text, a "
@@ -70,9 +61,7 @@ UNIFIED_PROMPT = (
     'Never classify juice/milk/soda as water.\n'
     '- "chat": anything else.\n\n'
     "IF food: Identify the food(s) and quantity, then give your best nutrition "
-    "estimate for the EXACT amount described. The system overrides with a "
-    "verified database whenever the food is known and only shows your estimate "
-    "for confirmation otherwise. Fill:\n"
+    "estimate for the EXACT amount described. Fill:\n"
     "- item_name: short English name of the food(s) (e.g. '2 boiled eggs + 2 chapatis', "
     "'chicken biryani')\n"
     "- quantity: number of servings/items described (default 1)\n"
@@ -97,9 +86,8 @@ UNIFIED_PROMPT = (
 )
 
 # ─────────────────────────────────────────────────────────────
-# Ambiguity-check prompt — sent AFTER classification for foods
-# that hit Groq (unknown to local DB). Determines if the food
-# is ambiguous enough to need clarification pills.
+# Ambiguity-check prompt — sent AFTER classification for foods.
+# Determines if the food is ambiguous enough to need clarification pills.
 # ─────────────────────────────────────────────────────────────
 AMBIGUITY_PROMPT = (
     "You are a nutrition clarity assistant. Given a food name and the user's "
@@ -271,20 +259,6 @@ def _check_ambiguity(food_name, user_text):
     return result
 
 
-def resolve_pill(pill_text, food_name=""):
-    """Resolve a pill selection to full nutrition by looking up the pill text
-    in the local DB / FatSecret. Returns a shaped food dict or None."""
-    # First try the pill text directly (it's a descriptive string)
-    result = fooddb.parse_food(pill_text)
-    if result:
-        return result
-    # Try combining food name + pill text
-    combined = f"{food_name} {pill_text}"
-    result = fooddb.parse_food(combined)
-    if result:
-        return result
-    return None
-
 
 def _int(v):
     try:
@@ -305,15 +279,10 @@ def _has_macros(d):
     return any(_int(d.get(k)) > 0 for k in ("calories", "protein_g", "carbs_g", "fat_g"))
 
 
-def _shape_food(d, allow_clarify=True, audit=None, pills=None, default_fallback="",
+def _shape_food(d, allow_clarify=True, pills=None, default_fallback="",
                 source=None):
-    """Shape a food result dict. If audit is provided, use it for nutrition
-    (the database is the source of truth). Otherwise use the AI's estimate."""
-    if audit:
-        # Use the database lookup result as the source of truth
-        return audit
-
-    # Fallback: the AI's estimated macros (shown to the user for confirmation)
+    """Shape a food result dict from AI estimates."""
+    # the AI's estimated macros (shown to the user for confirmation)
     cal = _int(d.get("calories"))
     p = _int(d.get("protein_g"))
     cb = _int(d.get("carbs_g"))
@@ -348,11 +317,9 @@ def _shape_food(d, allow_clarify=True, audit=None, pills=None, default_fallback=
 def parse(payload):
     """Single call: classify + extract. Returns a normalized dict.
 
-    Hybrid strategy:
-      1. Local DB fast path (zero API cost, exact values) for known food.
-      2. Otherwise AI classifies AND estimates macros — shown to the user
-         for confirmation (no dead-ends, no FatSecret re-mapping).
-      Photos go to Gemini vision.
+    AI-first strategy:
+      Groq classifies the input AND estimates macros — shown to the user
+      for confirmation. Photos go to Gemini vision.
     """
     text_bits = " ".join(p for p in payload if isinstance(p, str))
     hint = portions.hint_for(text_bits)
@@ -361,15 +328,6 @@ def parse(payload):
         prompt = prompt + hint
 
     has_image = any(isinstance(p, dict) and "data" in p for p in payload)
-
-    # Fast path: try local food DB for plain text (no API call needed).
-    # parse_local only (not parse_food) — FatSecret is not auto-hit, so
-    # unknown foods flow straight to the AI estimate instead of a wrong match.
-    text_only = all(isinstance(p, str) for p in payload)
-    if text_only and text_bits.strip():
-        local_food = fooddb.parse_local(text_bits)
-        if local_food:
-            return local_food
 
     # AI path: classify input, extract structure + estimated macros
     d = _generate(payload, prompt)
@@ -385,42 +343,33 @@ def parse(payload):
         return {"type": "chat", "reply": msg + " Or just type what you ate / did."}
 
     if kind == "food":
-        # Hybrid: local DB is authoritative for known foods; the AI provides
-        # estimated macros for anything else (confirmed before logging).
         food_name = d.get("item_name", "")
-        audit = fooddb.parse_food(food_name) if food_name else None
         estimated = _has_macros(d)
 
-        # Photos: Gemini identifies the food. Use DB nutrition when the name
-        # matches; otherwise show pills so the user picks the preparation.
+        # Photos: Gemini identifies the food. Show pills so the user picks
+        # the preparation, otherwise use AI estimate directly.
         if has_image:
-            if audit:
-                return _shape_food(d, allow_clarify=True, audit=audit)
             amb = _check_ambiguity(food_name, text_bits or f"[photo: {food_name}]")
             if amb.get("pills"):
-                return _shape_food(d, allow_clarify=True, audit=None,
+                return _shape_food(d, allow_clarify=True,
                                    pills=amb["pills"],
                                    default_fallback=food_name)
-            return _shape_food(d, allow_clarify=True, audit=None,
+            return _shape_food(d, allow_clarify=True,
                                default_fallback=food_name)
-
-        # Known food → exact DB values (no AI re-mapping, no pills).
-        if audit:
-            return _shape_food(d, allow_clarify=True, audit=audit)
 
         # AI estimated macros → show them directly for confirmation.
         if estimated:
-            return _shape_food(d, allow_clarify=True, audit=None,
+            return _shape_food(d, allow_clarify=True,
                                source="ai_estimate")
 
         # No usable estimate & AI flagged ambiguity → clarification pills.
         amb = _check_ambiguity(food_name, text_bits)
         if amb.get("requires_clarification") and amb.get("pills"):
-            return _shape_food(d, allow_clarify=True, audit=None,
+            return _shape_food(d, allow_clarify=True,
                                pills=amb["pills"],
                                default_fallback=amb.get("default_fallback", ""))
 
-        return _shape_food(d, allow_clarify=True, audit=None,
+        return _shape_food(d, allow_clarify=True,
                            source="groq_fallback")
 
     if kind == "workout":
@@ -439,7 +388,7 @@ def parse(payload):
 
 
 def parse_food(payload, clarify_round=0):
-    """Food-only parse for clarification re-runs. One Gemini call."""
+    """Food-only parse for clarification re-runs. One AI call."""
     prompt = UNIFIED_PROMPT
     text_bits = " ".join(p for p in payload if isinstance(p, str))
     hint = portions.hint_for(text_bits)
@@ -450,12 +399,7 @@ def parse_food(payload, clarify_round=0):
                   "Set needs_clarification=false and give your best final estimate now.")
     prompt = prompt + "\n\n(Treat this input as FOOD.)"
     d = _generate(payload, prompt)
-    # For clarification, we need to look up nutrition from the database
-    food_name = d.get("item_name", "")
-    audit = fooddb.parse_food(food_name) if food_name else None
-    if not audit:
-        audit = fooddb.parse_food(text_bits)
-    return _shape_food(d, allow_clarify=(clarify_round < 2), audit=audit)
+    return _shape_food(d, allow_clarify=(clarify_round < 2))
 
 
 def reparse_food_with_answer(original_text, question, answer, clarify_round=1):
@@ -466,11 +410,6 @@ def reparse_food_with_answer(original_text, question, answer, clarify_round=1):
 
 
 def parse_with_pill(pill_text, food_name=""):
-    """Resolve a pill selection to full nutrition. Called when user taps a pill.
-    Returns a shaped food dict with nutrition from local DB / FatSecret."""
-    audit = resolve_pill(pill_text, food_name)
-    if audit:
-        audit["needs_clarification"] = False
-        return audit
-    # Fallback: ask Groq to parse the pill text as food
+    """Resolve a pill selection to full nutrition via AI.
+    Returns a shaped food dict."""
     return parse([f"User input: {pill_text}"])

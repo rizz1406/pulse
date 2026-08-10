@@ -65,11 +65,15 @@ class TestAPI(unittest.TestCase):
 
     # ── /api/log ──
     def test_log_text_food(self):
-        r = self.client.post("/api/log", json={"text": "2 boiled eggs"})
+        with mock.patch.object(parser, "_generate", return_value={
+            "type": "food", "item_name": "2 boiled eggs",
+            "calories": 144, "protein_g": 12, "carbs_g": 0, "fat_g": 10,
+            "confidence_notes": "2 large eggs, boiled",
+        }):
+            r = self.client.post("/api/log", json={"text": "2 boiled eggs"})
         self.assertEqual(r.status_code, 200)
         d = r.get_json()
         self.assertEqual(d["type"], "food")
-        self.assertEqual(d["calories"], 144)
 
     def test_log_empty_text(self):
         r = self.client.post("/api/log", json={"text": "   "})
@@ -117,7 +121,11 @@ class TestAPI(unittest.TestCase):
 
     # ── full journey: log → confirm → today → edit → delete ──
     def test_full_food_journey(self):
-        d = self.client.post("/api/log", json={"text": "2 eggs"}).get_json()
+        with mock.patch.object(parser, "_generate", return_value={
+            "type": "food", "item_name": "2 eggs",
+            "calories": 144, "protein_g": 12, "carbs_g": 0, "fat_g": 10,
+        }):
+            d = self.client.post("/api/log", json={"text": "2 eggs"}).get_json()
         r = self.client.post("/api/confirm", json=d)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.get_json()["streak"], 1)
