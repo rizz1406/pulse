@@ -8,8 +8,7 @@ Hybrid food parsing:
   2. Groq AI — estimates macros for anything the DB doesn't know
      (e.g. "2 banana and 2 omelette" when parts aren't in the DB). The
      estimate is shown to the user for confirmation before logging.
-  3. Photos go to Gemini vision (Groq has no vision model); voice goes to
-     Groq Whisper for transcription.
+  3. Photos go to Gemini vision (Groq has no vision model).
 
 The local DB is authoritative when it matches — the AI never re-maps known
 foods. Unknown foods get an AI estimate, not a dead-end or a wrong DB match.
@@ -352,7 +351,7 @@ def parse(payload):
       1. Local DB fast path (zero API cost, exact values) for known food.
       2. Otherwise AI classifies AND estimates macros — shown to the user
          for confirmation (no dead-ends, no FatSecret re-mapping).
-      Photos go to Gemini vision; voice is transcribed by Whisper.
+      Photos go to Gemini vision.
     """
     text_bits = " ".join(p for p in payload if isinstance(p, str))
     hint = portions.hint_for(text_bits)
@@ -474,40 +473,3 @@ def parse_with_pill(pill_text, food_name=""):
         return audit
     # Fallback: ask Groq to parse the pill text as food
     return parse([f"User input: {pill_text}"])
-
-
-def _audio_ext(mime_type):
-    """Map a MIME type to a file extension Groq Whisper accepts."""
-    m = (mime_type or "").lower()
-    if "mp4" in m or "m4a" in m or "mpeg" in m:
-        return "m4a"
-    if "wav" in m:
-        return "wav"
-    if "mp3" in m:
-        return "mp3"
-    return "webm"
-
-
-def transcribe_audio(blob, mime_type="audio/webm"):
-    """Transcribe a voice note via Groq Whisper. Returns trimmed text or None.
-
-    Raises ParseError with a friendly message on API problems.
-    """
-    fname = f"voice.{_audio_ext(mime_type)}"
-    try:
-        response = _get_client().audio.transcriptions.create(
-            model=config.GROQ_WHISPER_MODEL,
-            file=(fname, blob, mime_type or "audio/webm"),
-        )
-        text = (response.text or "").strip()
-    except Exception as e:
-        msg = (str(e) or "").lower()
-        if "429" in msg or "quota" in msg or "rate limit" in msg:
-            raise ParseError("Rate limit hit — wait a minute and try again.") from e
-        code = getattr(e, "status_code", None)
-        if code == 401 or "api key" in msg or "unauthorized" in msg:
-            raise ParseError("Invalid Groq API key — check GROQ_API_KEY") from e
-        if "404" in msg or "not found" in msg or "model" in msg:
-            raise ParseError("Whisper model unavailable on this account.") from e
-        raise ParseError(f"Voice transcription failed: {e}") from e
-    return text or None

@@ -431,40 +431,7 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(d["source"], "ai_estimate")
         self.assertEqual(d["calories"], 290)
 
-    # ── /api/transcribe (Groq Whisper) ──
-    def test_transcribe_endpoint(self):
-        import io
-        import parser as parser_mod
-        with mock.patch.object(parser_mod, "transcribe_audio",
-                               return_value="2 banana and 2 omelette"):
-            r = self.client.post("/api/transcribe",
-                                 data={"audio": (io.BytesIO(b"fake audio"),
-                                                "voice.webm", "audio/webm")},
-                                 content_type="multipart/form-data")
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.get_json()["text"], "2 banana and 2 omelette")
 
-    def test_transcribe_empty_returns_error(self):
-        import io
-        import parser as parser_mod
-        with mock.patch.object(parser_mod, "transcribe_audio", return_value=None):
-            r = self.client.post("/api/transcribe",
-                                 data={"audio": (io.BytesIO(b""),
-                                                "voice.webm", "audio/webm")},
-                                 content_type="multipart/form-data")
-        self.assertEqual(r.status_code, 422)
-
-    def test_transcribe_parse_error_mapped(self):
-        import io
-        import parser as parser_mod
-        with mock.patch.object(parser_mod, "transcribe_audio",
-                               side_effect=parser_mod.ParseError("rate limit hit")):
-            r = self.client.post("/api/transcribe",
-                                 data={"audio": (io.BytesIO(b"x"),
-                                                "voice.webm", "audio/webm")},
-                                 content_type="multipart/form-data")
-        self.assertEqual(r.status_code, 422)
-        self.assertIn("rate limit", r.get_json()["error"])
 
 
 def goals_protein_at(w):

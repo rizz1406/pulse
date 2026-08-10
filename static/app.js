@@ -164,48 +164,6 @@ async function onPhoto(input){
   await sendPayload({form});
 }
 
-/* ---------- VOICE (MediaRecorder → Groq Whisper — works on all phones) ---------- */
-let _rec=null, _chunks=[];
-async function toggleMic(){
-  const mic=document.getElementById('micBtn');
-  if(_rec){ _rec.stop(); return; } // tap again → stop & send
-  let stream;
-  try{ stream=await navigator.mediaDevices.getUserMedia({audio:true}); }
-  catch(e){ toast('Microphone blocked — allow access and try again'); return; }
-  try{
-    _chunks=[];
-    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
-    _rec=new MediaRecorder(stream,{mimeType:mime});
-    _rec.ondataavailable=e=>{ if(e.data&&e.data.size) _chunks.push(e.data); };
-    _rec.onstop=async ()=>{
-      const mimeBase=(mime.split(';')[0]||'audio/webm');
-      const blob=new Blob(_chunks,{type:mimeBase});
-      stream.getTracks().forEach(t=>t.stop());
-      _rec=null; mic.classList.remove('rec'); mic.textContent='🎙';
-      const ext = mimeBase==='audio/mp4' ? 'm4a' : 'webm';
-      await sendVoice(blob, mimeBase, ext);
-    };
-    mic.classList.add('rec'); mic.textContent='⏹';
-    _rec.start(250);
-  }catch(e){ mic.classList.remove('rec'); mic.textContent='🎙'; toast('Could not start recording'); }
-}
-async function sendVoice(blob, mime, ext){
-  document.getElementById('sendBtn').innerHTML='<div class="spinner"></div>';
-  const form=new FormData();
-  form.append('audio', blob, 'voice.'+ext);
-  try{
-    const r=await fetch('/api/transcribe',{method:'POST',body:form});
-    const d=await r.json();
-    if(!r.ok){ toast(d.error||'Voice failed'); return; }
-    if(!d.text){ toast('Could not hear anything — try again'); return; }
-    ta.value=d.text; ta.style.height='auto';
-    await sendText();
-  }catch(e){ toast('Network error'); }
-  finally{ document.getElementById('sendBtn').innerHTML='➤'; }
-}
-
 /* ---------- RESULT / PREVIEW ---------- */
 function handleResult(d){
   if(d.type==='chat'){ showChat(d.reply); return; }
@@ -812,17 +770,29 @@ function _clearScanner(){
 function manualBarcodeLookup(){
   const inp=document.getElementById('barcodeManual');
   const code=inp.value.trim(); inp.value='';
-  if(!/^\d+$/.test(code)){ toast('Enter the barcode numbers'); return; }
+  if(!/^\d{8,14}$/.test(code)){ toast('Enter 8–14 digit barcode number'); return; }
   lookupBarcode(code);
 }
+function _sanitizeBarcode(raw){
+  if(!raw) return '';
+  let s=String(raw).trim();
+  // If scanner returned a URL (some barcodes encode URLs), extract the digits.
+  const m=s.match(/(\d{8,14})/);
+  if(m) return m[1];
+  // Strip anything that isn't a digit.
+  s=s.replace(/\D/g,'');
+  return s;
+}
 async function lookupBarcode(code){
+  code=_sanitizeBarcode(code);
+  if(!code){ toast('Invalid barcode'); return; }
   _clearScanner();
   const res=document.getElementById('barcodeResult');
   res.innerHTML='<div style="color:var(--muted);font-size:13px">Looking up '+esc(code)+'...</div>';
   try{
     const r=await fetch('/api/barcode/'+code);
     const d=await r.json();
-    if(!d.found){res.innerHTML='<div style="color:var(--danger);font-size:13px">'+esc(d.error||'Not found')+'</div>';return;}
+    if(!r.ok||!d.found){res.innerHTML='<div style="color:var(--danger);font-size:13px">'+esc(d.error||('Not found (HTTP '+r.status+')'))+'</div>';return;}
     res.innerHTML=`
       <div class="barcode-info">
         <div class="barcode-name">${esc(d.name)}${d.brand?' <span style="color:var(--muted)">('+esc(d.brand)+')</span>':''}</div>
@@ -830,7 +800,7 @@ async function lookupBarcode(code){
         <div class="barcode-macros">${d.calories}kcal · ${d.protein}p · ${d.carbs}c · ${d.fat}f</div>
         <button class="suggest-log" onclick="logBarcode('${esc(d.name)}',${d.calories},${d.protein},${d.carbs},${d.fat})">Log this</button>
       </div>`;
-  }catch(e){res.innerHTML='<div style="color:var(--danger);font-size:13px">Lookup failed</div>';}
+  }catch(e){res.innerHTML='<div style="color:var(--danger);font-size:13px">Network error — try again</div>';}
 }
 async function logBarcode(name,cal,p,c,f){
   try{
