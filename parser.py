@@ -121,6 +121,7 @@ def _generate(payload, prompt):
         resp = _get_client().models.generate_content(
             model=config.GEMINI_MODEL,
             contents=contents,
+            timeout=10,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=RESPONSE_SCHEMA,
@@ -133,7 +134,13 @@ def _generate(payload, prompt):
                 "Couldn't talk to Gemini — the API key looks invalid. Check GEMINI_API_KEY.") from e
         if "429" in msg or "rate" in msg or "quota" in msg:
             raise ParseError("Gemini rate limit hit — wait a minute and try again.") from e
-        if "timeout" in msg or "connection" in msg or "network" in msg:
+        if "not found" in msg or "model" in msg:
+            raise ParseError(
+                "Gemini model unavailable — check GEMINI_MODEL "
+                "(e.g. gemini-2.0-flash).") from e
+        if "timeout" in msg or "timed out" in msg:
+            raise ParseError("Gemini took too long — try again.") from e
+        if "connection" in msg or "network" in msg or "dns" in msg:
             raise ParseError("Network hiccup talking to Gemini — try again.") from e
         raise ParseError(f"Gemini error: {e}") from e
     return json.loads(resp.text)

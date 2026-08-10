@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 # ── Required ─────────────────────────────────────────────────
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 # Gemini model — auto-tracks current free Flash. Fallbacks: gemini-2.5-flash-lite, gemini-2.0-flash
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 # ── Simple passcode so only you can use the app ──────────────
 # Set a value you'll remember in .env. Leave "" to disable the lock (not recommended when hosted).
 APP_PASSCODE = os.getenv("APP_PASSCODE", "")

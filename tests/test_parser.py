@@ -17,6 +17,10 @@ import config  # noqa: E402
 config.DB_PATH = os.path.join(tempfile.mkdtemp(), "parser.db")
 config.LOCAL_TZ = __import__("zoneinfo").ZoneInfo("UTC")
 
+# Some tests swap parser._generate for Mocks and never restore it; capture
+# the real function here so error-mapping tests can pin it back.
+_REAL_GENERATE = parser._generate
+
 
 class TestParser(unittest.TestCase):
     """Parser logic with the Gemini client mocked out — no key needed."""
@@ -101,24 +105,28 @@ class TestParser(unittest.TestCase):
     def test_parse_workout(self):
         self._fake_generate({"type": "workout", "exercise_name": "Bench Press",
                              "weight_kg": 60, "sets": 3, "reps": 8, "notes": ""})
-        d = parser.parse(["User input: bench pressed"])
+        with mock.patch.object(parser.fooddb, "parse_food", return_value=None):
+            d = parser.parse(["User input: bench pressed"])
         self.assertEqual(d["exercise_name"], "Bench Press")
         self.assertEqual(d["sets"], 3)
 
     def test_parse_weight_float(self):
         self._fake_generate({"type": "weight", "weight_kg": 76.4, "notes": ""})
-        d = parser.parse(["User input: I weigh 76.4"])
+        with mock.patch.object(parser.fooddb, "parse_food", return_value=None):
+            d = parser.parse(["User input: I weigh 76.4"])
         self.assertAlmostEqual(d["weight_kg"], 76.4)
 
     def test_parse_water(self):
         self._fake_generate({"type": "water", "ml": 2000})
-        d = parser.parse(["User input: drank 2 litre paani"])
+        with mock.patch.object(parser.fooddb, "parse_food", return_value=None):
+            d = parser.parse(["User input: drank 2 litre paani"])
         self.assertEqual(d["type"], "water")
         self.assertEqual(d["ml"], 2000)
 
     def test_parse_chat_fallback(self):
         self._fake_generate({"type": "chat", "reply": "Nice! Log a meal?"})
-        d = parser.parse(["User input: hello"])
+        with mock.patch.object(parser.fooddb, "parse_food", return_value=None):
+            d = parser.parse(["User input: hello"])
         self.assertEqual(d["type"], "chat")
         self.assertIn("Log a meal", d["reply"])
 
@@ -152,6 +160,28 @@ class TestParser(unittest.TestCase):
         self.assertIn("matched_food", d)
         self.assertIn("serving_g", d)
         self.assertIn("qty", d)
+
+    def test_generate_maps_rate_limit_error(self):
+        """429/quota exceptions surface a specific message (not a generic one)."""
+        client = mock.Mock()
+        client.models.generate_content.side_effect = \
+            Exception("429 RESOURCE_EXHAUSTED: quota exceeded")
+        with mock.patch.object(parser, "_get_client", return_value=client), \
+                mock.patch.object(parser, "_generate", _REAL_GENERATE):
+            with self.assertRaises(parser.ParseError) as ctx:
+                parser._generate(["x"], "prompt")
+        self.assertIn("rate limit", str(ctx.exception).lower())
+
+    def test_generate_maps_model_not_found_error(self):
+        """Unknown model strings surface a model error (e.g. env misconfig)."""
+        client = mock.Mock()
+        client.models.generate_content.side_effect = \
+            Exception("404 NOT_FOUND: models/gemini-9.9-flash not found")
+        with mock.patch.object(parser, "_get_client", return_value=client), \
+                mock.patch.object(parser, "_generate", _REAL_GENERATE):
+            with self.assertRaises(parser.ParseError) as ctx:
+                parser._generate(["x"], "prompt")
+        self.assertIn("model", str(ctx.exception).lower())
 
 
 class TestServingConversion(unittest.TestCase):

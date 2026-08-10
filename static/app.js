@@ -212,10 +212,13 @@ function showClarify(d){
 async function answerClarify(answer){
   document.getElementById('sheet').innerHTML=
     '<div style="text-align:center;padding:30px"><div class="spinner" style="border-top-color:var(--accent);border-color:rgba(182,255,61,.25);margin:0 auto"></div><div style="color:var(--muted);margin-top:14px;font-size:14px">Recalculating…</div></div>';
-  const r=await fetch('/api/clarify',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({original:clarifyCtx.original,question:clarifyCtx.question,answer,round:clarifyCtx.round})});
-  const d=await r.json();
-  handleResult(d); // may show a 2nd question, or the final confirm card
+  try{
+    const r=await fetch('/api/clarify',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({original:clarifyCtx.original,question:clarifyCtx.question,answer,round:clarifyCtx.round})});
+    const d=await r.json();
+    if(!r.ok){ toast(d.error||'Something went wrong'); closeSheet(); return; }
+    handleResult(d); // may show a 2nd question, or the final confirm card
+  }catch(e){ toast('Network error'); closeSheet(); }
 }
 function skipClarify(){
   const d=clarifyCtx.fallback; d.needs_clarification=false;
