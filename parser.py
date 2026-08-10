@@ -27,7 +27,19 @@ _client = None
 
 # Groq model used for classification / clarification / chat.
 GROQ_MODEL = "llama-3.3-70b-versatile"
-GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview"
+
+_vision_client = None
+
+
+def _get_vision_client():
+    """OpenAI-compatible client for Gemini (vision only — Groq has no vision)."""
+    global _vision_client
+    if _vision_client is None:
+        _vision_client = OpenAI(
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            api_key=config.GEMINI_API_KEY,
+        )
+    return _vision_client
 
 
 def _get_client():
@@ -95,6 +107,11 @@ AMBIGUITY_PROMPT = (
     "'masala omelette' (oil/ingredients vary), 'egg curry' (gravy richness), "
     "'biryani' (oil/ghee/portion). Return requires_clarification=true with "
     "2-4 pills representing the most common preparations.\n\n"
+    "IMPORTANT — pills must use NATURAL units for the food:\n"
+    "- Whole fruits/vegetables (apple, banana, mango): size or count "
+    "('1 small', '1 medium', '1 large', '2 medium'). Never 'cup' or 'bowl'.\n"
+    "- Drinks (chai, coffee): 'bottle', 'glass', 'cup' + prep details.\n"
+    "- Solid meals (curry, biryani): 'plate', 'bowl', 'half plate'.\n\n"
     "Each pill MUST have:\n"
     "- label: short display name (e.g. 'Milk + 1 tsp Sugar')\n"
     "- text: full descriptive input for DB lookup (e.g. '1 cup chai with "
@@ -141,11 +158,39 @@ PHOTO_PROMPT = (
 
 
 def _generate(payload, prompt):
-    """One Groq call returning parsed JSON dict."""
+    """One AI call returning parsed JSON dict.
+
+    Text → Groq (llama-3.3). Images → Gemini vision (Groq has no vision model).
+    """
     has_image = any(isinstance(p, dict) and "data" in p for p in payload)
-    model = GROQ_VISION_MODEL if has_image else GROQ_MODEL
     if has_image:
+        if not config.GEMINI_API_KEY:
+            return {"type": "chat", "error": "no_gemini_key"}
         prompt = PHOTO_PROMPT
+        messages = [{"role": "user", "content": _to_parts(payload, prompt)}]
+        try:
+            response = _get_vision_client().chat.completions.create(
+                model=config.GEMINI_VISION_MODEL,
+                messages=messages,
+                temperature=0.2,
+                response_format={"type": "json_object"},
+            )
+            text = response.choices[0].message.content or "{}"
+        except openai.APIError as e:
+            msg = str(e).lower()
+            if e.status_code == 401 or "api key" in msg or "unauthorized" in msg:
+                return {"type": "chat", "error": "Invalid Gemini API key — check GEMINI_API_KEY"}
+            if "quota" in msg or "429" in msg:
+                return {"type": "chat", "error": "Gemini quota hit — photo analysis failed, try again later"}
+            return {"type": "chat", "error": f"Photo analysis failed: {e}"}
+        except Exception as e:
+            return {"type": "chat", "error": f"Photo analysis failed — try again ({e})"}
+        try:
+            return json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return {"type": "chat", "error": "Photo analysis returned unparseable output — try again."}
+
+    model = GROQ_MODEL
     messages = [{"role": "user", "content": _to_parts(payload, prompt)}]
     try:
         response = _get_client().chat.completions.create(
@@ -293,8 +338,8 @@ def parse(payload):
     """Single call: classify + extract. Returns a normalized dict.
 
     For food: tries local DB / FatSecret first (zero API cost).
-    Only calls Gemini for non-food or when local lookup fails.
-    Photos skip local DB — Groq vision identifies the food directly.
+    Only calls the AI for non-food or when local lookup fails.
+    Photos go to Gemini vision (Groq has no vision model).
     """
     text_bits = " ".join(p for p in payload if isinstance(p, str))
     hint = portions.hint_for(text_bits)
@@ -311,9 +356,18 @@ def parse(payload):
         if local_food:
             return local_food
 
-    # Gemini path: classify input, extract structure
+    # AI path: classify input, extract structure
     d = _generate(payload, prompt)
     kind = d.get("type", "food" if has_image else None) or d.get("type", "chat")
+
+    # AI errors (bad key, quota, no Gemini key…) → friendly chat reply
+    if kind == "chat" and d.get("error"):
+        msg = d["error"]
+        if msg == "no_gemini_key":
+            return {"type": "chat", "reply": (
+                "📷 I can't read photos yet — no Gemini API key is configured. "
+                "Add GEMINI_API_KEY to .env / Render, or just type what you ate.")}
+        return {"type": "chat", "reply": msg + " Or just type what you ate / did."}
 
     if kind == "food":
         # Groq identified the food but didn't give nutrition (we told it not to).
@@ -327,9 +381,11 @@ def parse(payload):
             # Try the original text with the Groq-identified name
             audit = fooddb.parse_food(text_bits)
 
-        # Photos: Groq already identified the food; skip local DB entirely.
-        # Show pills for user confirmation, with default_fallback = food name.
+        # Photos: Gemini identified the food. Use local DB nutrition when the
+        # name matches; otherwise show pills for user confirmation.
         if has_image and food_name:
+            if audit:
+                return _shape_food(d, allow_clarify=True, audit=audit)
             amb = _check_ambiguity(food_name, text_bits or f"[photo: {food_name}]")
             if amb.get("pills"):
                 return _shape_food(d, allow_clarify=True, audit=None,

@@ -8,6 +8,8 @@ services:
     envVars:
       - key: GROQ_API_KEY
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
       - key: APP_PASSCODE
         sync: false
       - key: TURSO_DATABASE_URL

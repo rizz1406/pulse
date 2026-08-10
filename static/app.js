@@ -728,13 +728,13 @@ checkAuth();
 /* ---------- BARCODE SCANNER ---------- */
 let _barcodeScanner=null;
 function startBarcode(){
-  document.getElementById('barcodeOverlay').classList.add('open');
+  document.getElementById('barcodeOverlay').classList.add('show');
   document.getElementById('barcodeResult').innerHTML='';
   _barcodeScanner=new Html5QrcodeScanner("barcodeReader",{fps:10,qrbox:{width:280,height:120}});
   _barcodeScanner.render((code)=>{lookupBarcode(code);});
 }
 function stopBarcode(){
-  document.getElementById('barcodeOverlay').classList.remove('open');
+  document.getElementById('barcodeOverlay').classList.remove('show');
   if(_barcodeScanner){_barcodeScanner.clear().catch(()=>{});_barcodeScanner=null;}
   document.getElementById('barcodeReader').innerHTML='';
 }

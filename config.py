@@ -18,6 +18,10 @@ from zoneinfo import ZoneInfo
 
 # ── Required ─────────────────────────────────────────────────
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+# ── Vision (photos) — Gemini free tier. Groq has no vision model. ──
+# Get a free key at https://aistudio.google.com/apikey
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
 # ── Simple passcode so only you can use the app ──────────────
 # Set a value you'll remember in .env. Leave "" to disable the lock (not recommended when hosted).
 APP_PASSCODE = os.getenv("APP_PASSCODE", "")
@@ -61,3 +65,4 @@ def validate():
         )
     if not SECRET_KEY:
         raise RuntimeError("SECRET_KEY must not be empty.")
+    # Gemini is optional: photo recognition needs it, everything else works without it.

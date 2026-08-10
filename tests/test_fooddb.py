@@ -199,6 +199,23 @@ class TestFoodDB(unittest.TestCase):
         d = fooddb.parse_local("quantum entanglement")
         self.assertIsNone(d)
 
+    def test_fuzzy_typo_matches_local(self):
+        """Regression: 'aaple' typo must match local 'apple', not FatSecret."""
+        d = fooddb.parse_food("aaple")
+        self.assertIsNotNone(d)
+        self.assertEqual(d["matched_food"], "apple")
+        self.assertEqual(d["source"], "local")
+        self.assertEqual(d["calories"], 94)
+        d2 = fooddb.parse_food("appple")
+        self.assertEqual(d2["matched_food"], "apple")
+
+    def test_fuzzy_does_not_match_unrelated(self):
+        """Fuzzy must not invent matches for unrelated single words."""
+        d = fooddb.parse_local("asdfgh")
+        self.assertIsNone(d)
+        d2 = fooddb.parse_local("quantum")
+        self.assertIsNone(d2)
+
     def test_cola_not_matched_inside_chocolate(self):
         """Regression: '330ml chocolate shake' must never match 'cola'
         ('cola' is a substring of 'chocolate'). Falls through to FatSecret."""

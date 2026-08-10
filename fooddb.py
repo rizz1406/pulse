@@ -18,6 +18,7 @@ Every result includes an audit trail:
 import re
 import json
 import math
+import difflib
 import urllib.request
 import urllib.parse
 import config
@@ -501,6 +502,48 @@ def _parse_single(text):
                 notes=f"local DB: {key} ({data['serving_g']}g/serving, qty={qty}x, word match)",
             )
 
+    # Strategy 4: Fuzzy typo match (e.g. "aaple" → "apple").
+    # Only for short single-word queries and only if reasonably close.
+    if t and len(cleaned) > 2 and " " not in cleaned.strip():
+        fuzzy = _match_fuzzy(cleaned.strip())
+        if fuzzy:
+            key, ratio = fuzzy
+            data = FOODS[key]
+            cal, p, c, f = _calc_nutrition(
+                data["cal"], data["p"], data["c"], data["f"],
+                data["serving_g"], qty, gram_mode)
+            item_name = f"{_qty_word(qty)} {key.title()}" if qty != 1 else key.title()
+            return _build_result(
+                item_name=item_name,
+                cal=cal, p=p, c=c, f=f,
+                source="local",
+                matched_food=key,
+                serving_g=data["serving_g"],
+                qty=qty,
+                notes=f"local DB: {key} ({data['serving_g']}g/serving, qty={qty}x, "
+                      f"fuzzy {ratio:.0%})",
+            )
+
+    return None
+
+
+def _match_fuzzy(text):
+    """Typo-tolerant match of a short query against single-word food keys.
+    Returns (food_key, similarity) if close enough, else None."""
+    if not text or len(text) < 3:
+        return None
+    best, best_ratio = None, 0
+    for key in FOODS:
+        if "_" in key or " " in key or len(key) < 3:
+            continue  # skip alias/multi-word keys — fuzzy is for clean single words
+        kw = key.lower()
+        if kw == text:
+            return key, 1.0
+        ratio = difflib.SequenceMatcher(None, text, kw).ratio()
+        if ratio > best_ratio:
+            best, best_ratio = key, ratio
+    if best and best_ratio >= 0.75:
+        return best, best_ratio
     return None
 
 

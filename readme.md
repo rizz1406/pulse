@@ -35,7 +35,8 @@ nutrition, tracks your goals, and shows you modern-fitness-app analytics.
 | Layer | Choice | Why |
 |-------|--------|-----|
 | Backend | **Flask** (Python) | Simple, holds the AI key safely server-side |
-| AI | **Gemini 3.5 Flash** (free tier) | Multimodal — parses photos; quota resets daily |
+| AI (text) | **Groq** `llama-3.3-70b` (free tier) | Fast classification of meals/workouts/chat |
+| AI (photos) | **Gemini Flash** (free tier) | Groq has no vision — Gemini reads food photos |
 | Food data | **FatSecret** (free 5k/day) | Purpose-built nutrition search API |
 | Local DB | **150+ built-in foods** | Unlimited, instant, no API key needed |
 | Voice | **Web Speech API** | Browser-side transcription — free, no server processing |
@@ -69,7 +70,8 @@ pulse/
 
 ```bash
 pip install -r requirements.txt
-export GEMINI_API_KEY="your-key"
+export GROQ_API_KEY="your-groq-key"
+export GEMINI_API_KEY="your-gemini-key"   # only for photo recognition
 export APP_PASSCODE="your-passcode"
 python app.py
 ```
@@ -77,13 +79,16 @@ Open **http://localhost:5000**, enter your passcode, and log your first meal.
 
 **No API key?** The local food database works without any keys — just type your meals and it parses them instantly.
 
+**Photo recognition** needs `GEMINI_API_KEY` (free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)) — Groq has no vision model, so Gemini is used for photos only. Text stays on Groq.
+
 ## ☁️ Deploy to Render (free, mobile-accessible)
 
 1. Push this repo to GitHub
 2. Go to [render.com](https://render.com), create a free account
 3. New → Web Service → connect your GitHub repo
 4. Set environment variables in the Render dashboard:
-   - `GEMINI_API_KEY` — your Gemini key (for photos/voice)
+   - `GROQ_API_KEY` — text parsing AI
+   - `GEMINI_API_KEY` — photo recognition (free at aistudio.google.com/apikey)
    - `APP_PASSCODE` — your login passcode
    - `TURSO_DATABASE_URL` — your Turso database URL (for persistent data)
    - `TURSO_AUTH_TOKEN` — your Turso auth token

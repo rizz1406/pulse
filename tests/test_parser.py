@@ -430,8 +430,8 @@ class TestVisionModel(unittest.TestCase):
     def tearDown(self):
         parser._generate = self._orig_generate
 
-    def test_generate_uses_vision_model_for_image(self):
-        """_generate switches to GROQ_VISION_MODEL when image is in payload."""
+    def test_generate_uses_gemini_for_image(self):
+        """_generate routes images to Gemini vision (Groq has no vision)."""
         image_payload = [
             {"mime_type": "image/jpeg", "data": b"\x89PNG fake image data"},
         ]
@@ -452,9 +452,24 @@ class TestVisionModel(unittest.TestCase):
         mock_client = mock.Mock()
         mock_client.chat = mock_chat
 
-        with mock.patch.object(parser, "_get_client", return_value=mock_client):
-            parser._generate(image_payload, "Identify this food")
-        self.assertEqual(called_with["model"], parser.GROQ_VISION_MODEL)
+        config.GEMINI_API_KEY = "test-gemini-key"
+        try:
+            with mock.patch.object(parser, "_get_vision_client",
+                                   return_value=mock_client):
+                parser._generate(image_payload, "Identify this food")
+        finally:
+            config.GEMINI_API_KEY = ""
+        self.assertEqual(called_with["model"], config.GEMINI_VISION_MODEL)
+
+    def test_generate_no_gemini_key_for_image(self):
+        """Without GEMINI_API_KEY, images return a friendly chat error."""
+        image_payload = [
+            {"mime_type": "image/jpeg", "data": b"\x89PNG fake image data"},
+        ]
+        config.GEMINI_API_KEY = ""
+        result = parser._generate(image_payload, "Identify this food")
+        self.assertEqual(result["type"], "chat")
+        self.assertEqual(result["error"], "no_gemini_key")
 
     def test_generate_uses_text_model_for_text_only(self):
         """_generate uses GROQ_MODEL for text-only payload."""
@@ -485,7 +500,8 @@ class TestVisionModel(unittest.TestCase):
             {"mime_type": "image/jpeg", "data": b"\x89PNG fake image data"},
         ]
         with mock.patch.object(parser, "_generate") as mock_gen, \
-             mock.patch.object(parser, "_check_ambiguity") as mock_amb:
+             mock.patch.object(parser, "_check_ambiguity") as mock_amb, \
+             mock.patch.object(fooddb, "parse_food", return_value=None):
             mock_gen.return_value = {
                 "type": "food",
                 "item_name": "Masala Omelette",
@@ -506,31 +522,60 @@ class TestVisionModel(unittest.TestCase):
         self.assertTrue(result.get("needs_clarification"))
         self.assertEqual(len(result["pills"]), 2)
 
-    def test_photo_flow_skips_text_local_db(self):
-        """Photo payload: Groq identifies food, ambiguity check runs but text-only local DB is skipped."""
+    def test_photo_flow_uses_local_db_when_identified(self):
+        """Photo: Gemini identifies a known food → local DB nutrition, no pills."""
         image_payload = [
             {"mime_type": "image/jpeg", "data": b"\x89PNG fake image data"},
         ]
+        fake_audit = {"type": "food", "item_name": "Chicken Biryani",
+                      "calories": 450, "protein_g": 20, "carbs_g": 60,
+                      "fat_g": 15, "source": "local",
+                      "matched_food": "chicken biryani"}
         with mock.patch.object(parser, "_generate") as mock_gen, \
-             mock.patch.object(parser, "_check_ambiguity") as mock_amb:
+             mock.patch.object(parser, "_check_ambiguity") as mock_amb, \
+             mock.patch.object(fooddb, "parse_food", return_value=fake_audit):
             mock_gen.return_value = {
                 "type": "food",
                 "item_name": "Chicken Biryani",
                 "quantity": 1,
                 "unit": "plate",
             }
+            result = parser.parse(image_payload)
+        mock_gen.assert_called_once()
+        mock_amb.assert_not_called()
+        self.assertEqual(result["type"], "food")
+        self.assertEqual(result["source"], "local")
+        self.assertGreater(result["calories"], 0)
+        self.assertEqual(result["matched_food"], "chicken biryani")
+
+    def test_photo_flow_ambiguity_for_unknown_food(self):
+        """Photo: unknown dish → ambiguity pills for user confirmation."""
+        image_payload = [
+            {"mime_type": "image/jpeg", "data": b"\x89PNG fake image data"},
+        ]
+        with mock.patch.object(parser, "_generate") as mock_gen, \
+             mock.patch.object(parser, "_check_ambiguity") as mock_amb, \
+             mock.patch.object(fooddb, "parse_food", return_value=None):
+            mock_gen.return_value = {
+                "type": "food",
+                "item_name": "Mother's Special Curry",
+                "quantity": 1,
+                "unit": "plate",
+            }
             mock_amb.return_value = {
-                "requires_clarification": False,
-                "pills": [],
-                "default_fallback": "Chicken Biryani",
+                "requires_clarification": True,
+                "pills": [
+                    {"label": "Home-style", "text": "home style curry"},
+                    {"label": "Creamy", "text": "creamy curry"},
+                ],
+                "default_fallback": "home style curry",
             }
             result = parser.parse(image_payload)
-        # _generate should be called (Groq identifies the food)
         mock_gen.assert_called_once()
-        # ambiguity check should be called (for confirmation pills)
         mock_amb.assert_called_once()
         self.assertEqual(result["type"], "food")
-        self.assertEqual(result["item_name"], "Chicken Biryani")
+        self.assertTrue(result.get("needs_clarification"))
+        self.assertEqual(len(result["pills"]), 2)
 
 
 if __name__ == "__main__":
