@@ -195,9 +195,18 @@ class TestFoodDB(unittest.TestCase):
         self.assertGreater(d["calories"], 0)
 
     def test_not_found(self):
-        """Unknown food returns None."""
-        d = fooddb.parse_local("quantum physics textbook")
+        """Unknown food returns None (no food words in text)."""
+        d = fooddb.parse_local("quantum entanglement")
         self.assertIsNone(d)
+
+    def test_cola_not_matched_inside_chocolate(self):
+        """Regression: '330ml chocolate shake' must never match 'cola'
+        ('cola' is a substring of 'chocolate'). Falls through to FatSecret."""
+        d = fooddb.parse_local("330ml chocolate shake")
+        self.assertIsNone(d)
+        d_cola = fooddb.parse_local("500ml cola")
+        self.assertIsNotNone(d_cola)
+        self.assertEqual(d_cola["matched_food"], "cola")
 
     # ── Audit trail ──
     def test_audit_trail_present(self):
@@ -226,7 +235,11 @@ class TestFoodDB(unittest.TestCase):
 
     def test_parse_food_returns_none_for_unknown(self):
         """Unknown food returns None (caller should try Gemini)."""
-        d = fooddb.parse_food("quantum entanglement")
+        from unittest import mock
+        with mock.patch.object(fooddb, "config") as cfg, \
+                mock.patch.object(fooddb, "_fs_search", return_value=[]):
+            cfg.FATSECRET_CLIENT_ID = "test"
+            d = fooddb.parse_food("quantum entanglement")
         self.assertIsNone(d)
 
     # ── Regression: quantity handling fixes ──

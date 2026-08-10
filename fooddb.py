@@ -445,10 +445,11 @@ def _parse_single(text):
         )
 
     # Strategy 2: Try matching the cleaned text against FOODS keys
-    # (longest match first to avoid substring collisions)
+    # (longest match first to avoid substring collisions). Word-wrapped:
+    # raw substring match made "cola" match inside "chocolate".
     food_keys_sorted = sorted(FOODS.keys(), key=len, reverse=True)
     for key in food_keys_sorted:
-        if key in t:
+        if re.search(rf'\b{re.escape(key)}\b', t):
             data = FOODS[key]
             if data.get("_per_serving"):
                 # Per-serving item matched by substring — use qty from extraction
