@@ -105,6 +105,25 @@ class TestFoodDB(unittest.TestCase):
         self.assertIsNotNone(d)
         self.assertEqual(d["calories"], 390)  # 130 * 3
 
+    def test_home_style_palak_curry_includes_typical_added_fat(self):
+        """USDA cooked-spinach-with-fat reference, not plain raw spinach."""
+        d = fooddb.parse_local("150g palak curry")
+        self.assertEqual(d["calories"], 88)
+        self.assertEqual(d["protein_g"], 5.0)
+        self.assertEqual(d["carbs_g"], 4.5)
+        self.assertEqual(d["fat_g"], 5.5)
+        self.assertEqual(d["matched_food"], "palak curry")
+        self.assertIn("home-style estimate", d["confidence_notes"])
+
+    def test_rice_and_home_style_palak_curry_keeps_curry_estimate(self):
+        d = fooddb.parse_local("250g rice and 150g palak curry")
+        self.assertEqual(d["calories"], 413)
+        self.assertEqual(d["protein_g"], 12.5)
+        self.assertEqual(d["carbs_g"], 74.5)
+        self.assertEqual(d["fat_g"], 5.5)
+        self.assertEqual(d["item_name"], "250g Rice + 150g Palak Curry")
+        self.assertIn("actual oil may vary", d["confidence_notes"])
+
     # ── The exact case from the user's report ──
     def test_two_boiled_eggs_plus_two_chapati(self):
         """'2 boiled eggs + 2 chapati' should be ~484 kcal, NOT 490.

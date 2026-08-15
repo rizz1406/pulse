@@ -298,6 +298,15 @@ class TestServingConversion(unittest.TestCase):
         d = fooddb.parse_local("rice")
         self.assertEqual(d["calories"], 195)
 
+    def test_home_cooked_palak_curry_uses_fat_added_reference(self):
+        d = parser.parse(["User input: 250g cooked rice and 150g palak curry"])
+        self.assertEqual(d["calories"], 413)
+        self.assertEqual(d["protein_g"], 12.5)
+        self.assertEqual(d["carbs_g"], 74.5)
+        self.assertEqual(d["fat_g"], 5.5)
+        self.assertEqual(d["item_name"], "250g Rice + 150g Palak Curry")
+        self.assertIn("actual oil may vary", d["confidence_notes"])
+
     def test_grams_override_serving(self):
         """'200g rice' overrides default serving: 130 * 2 = 260 kcal."""
         d = fooddb.parse_local("200g rice")

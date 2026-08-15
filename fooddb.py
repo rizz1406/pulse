@@ -97,6 +97,12 @@ FOODS = {
     "sabzi":           {"cal": 65,  "p": 2,  "c": 8,  "f": 3,  "serving_g": 150},
     "palak":           {"cal": 23,  "p": 3,  "c": 4,  "f": 0,  "serving_g": 100},
     "spinach":         {"cal": 23,  "p": 3,  "c": 4,  "f": 0,  "serving_g": 100},
+    # USDA FNDDS 2709621: fresh spinach, cooked, fat added. Used only as a
+    # home-style estimate when the user explicitly says curry.
+    "palak curry":     {"cal": 59,  "p": 3.32,"c": 3.01,"f": 3.68,"serving_g": 150,
+                         "_estimate": "home-style estimate; actual oil may vary"},
+    "spinach curry":   {"cal": 59,  "p": 3.32,"c": 3.01,"f": 3.68,"serving_g": 150,
+                         "_estimate": "home-style estimate; actual oil may vary"},
     "bhindi":          {"cal": 33,  "p": 2,  "c": 7,  "f": 0,  "serving_g": 100},
     "bhindi curry":    {"cal": 80,  "p": 2,  "c": 8,  "f": 4,  "serving_g": 150},
     "okra":            {"cal": 33,  "p": 2,  "c": 7,  "f": 0,  "serving_g": 100},
@@ -527,7 +533,8 @@ def _parse_single(text):
                     matched_food=key,
                     serving_g=data["serving_g"],
                     qty=qty,
-                    notes=f"local DB: {key} ({data['serving_g']}g/serving, qty={qty}x)",
+                    notes=(data.get("_estimate") or
+                           f"local DB: {key} ({data['serving_g']}g/serving, qty={qty}x)"),
                 )
             else:
                 # Per-100g item — use default serving
@@ -542,7 +549,8 @@ def _parse_single(text):
                     matched_food=key,
                     serving_g=data["serving_g"],
                     qty=qty,
-                    notes=f"local DB: {key} ({data['serving_g']}g/serving, qty={qty}x)",
+                    notes=(data.get("_estimate") or
+                           f"local DB: {key} ({data['serving_g']}g/serving, qty={qty}x)"),
                 )
 
     # Strategy 3: Word-based matching for per-100g items
@@ -641,6 +649,11 @@ def _parse_multi(text):
         )
 
     item_name = " + ".join(matched_names)
+    estimate_notes = [d.get("confidence_notes", "") for d in items
+                      if "estimate" in d.get("confidence_notes", "").lower()]
+    audit_note = f"local DB: {len(items)} items — " + "; ".join(audit_parts)
+    if estimate_notes:
+        audit_note += "; " + "; ".join(estimate_notes)
     return _build_result(
         item_name=item_name,
         cal=total_cal, p=total_p, c=total_c, f=total_f,
@@ -648,7 +661,7 @@ def _parse_multi(text):
         matched_food="+".join(d["matched_food"] for d in items),
         serving_g=0,  # multi-item
         qty=1,
-        notes=f"local DB: {len(items)} items — " + "; ".join(audit_parts),
+        notes=audit_note,
     )
 
 
