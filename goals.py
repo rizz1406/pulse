@@ -84,10 +84,12 @@ def calculate(weight_kg, height_cm, age, sex, activity, objective):
     }
 
 
-def latest_weight():
+def latest_weight(conn=None):
     """Most recent logged body weight, or None."""
-    with _conn() as c:
-        r = c.execute("SELECT weight_kg FROM weight ORDER BY id DESC LIMIT 1").fetchone()
+    if conn is None:
+        with _conn() as c:
+            return latest_weight(c)
+    r = conn.execute("SELECT weight_kg FROM weight ORDER BY id DESC LIMIT 1").fetchone()
     return r["weight_kg"] if r else None
 
 
@@ -127,21 +129,23 @@ def save_goal(height_cm, age, sex, activity, objective, current_weight):
             save_weight(current_weight, "goal setup")
 
 
-def get_goal():
-    with _conn() as c:
-        r = c.execute("SELECT * FROM goal WHERE id=1").fetchone()
+def get_goal(conn=None):
+    if conn is None:
+        with _conn() as c:
+            return get_goal(c)
+    r = conn.execute("SELECT * FROM goal WHERE id=1").fetchone()
     return dict(r) if r else None
 
 
-def current_targets():
+def current_targets(conn=None, goal=None):
     """
     The live targets: uses the most recent logged weight (falls back to the
     weight saved at goal setup). Returns None if no goal set yet.
     """
-    g = get_goal()
+    g = goal if goal is not None else get_goal(conn)
     if not g:
         return None
-    weight = latest_weight() or g["start_weight"]
+    weight = latest_weight(conn) or g["start_weight"]
     t = calculate(weight, g["height_cm"], g["age"], g["sex"],
                   g["activity"], g["objective"])
     adjustment = int(g.get("calorie_adjustment") or 0)
@@ -156,16 +160,18 @@ def current_targets():
     return t
 
 
-def _lean_bulk_trend(g):
+def _lean_bulk_trend(g, conn=None):
     """Return a stable rate from two non-overlapping weigh-in windows."""
     today = datetime.now(config.LOCAL_TZ).date()
     goal_day = datetime.strptime(g["updated"][:10], "%Y-%m-%d").date()
     start = max(goal_day, today - timedelta(days=27)).isoformat()
-    with _conn() as c:
-        rows = c.execute(
-            "SELECT day, AVG(weight_kg) w FROM weight WHERE day>=? "
-            "GROUP BY day ORDER BY day", (start,),
-        ).fetchall()
+    if conn is None:
+        with _conn() as c:
+            return _lean_bulk_trend(g, c)
+    rows = conn.execute(
+        "SELECT day, AVG(weight_kg) w FROM weight WHERE day>=? "
+        "GROUP BY day ORDER BY day", (start,),
+    ).fetchall()
     points = [(datetime.strptime(r["day"], "%Y-%m-%d").date(), float(r["w"]))
               for r in rows]
     span = (points[-1][0] - points[0][0]).days if len(points) > 1 else 0
@@ -207,12 +213,12 @@ def _recommended_adjustment(rate):
     return -150
 
 
-def weight_coach():
+def weight_coach(conn=None, goal=None):
     """Describe the lean-bulk trend and whether the next review is due."""
-    g = get_goal()
+    g = goal if goal is not None else get_goal(conn)
     if not g or g["objective"] != "lean_bulk":
         return {"active": False}
-    trend = _lean_bulk_trend(g)
+    trend = _lean_bulk_trend(g, conn)
     today = datetime.now(config.LOCAL_TZ).date()
     last = g.get("last_adapted")
     next_review = ((datetime.strptime(last[:10], "%Y-%m-%d").date()

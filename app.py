@@ -16,6 +16,7 @@ from flask import (
 )
 
 import config
+import db
 import storage
 import parser
 import goals
@@ -34,6 +35,16 @@ app.secret_key = config.SECRET_KEY
 # tables lazily on the first request, which runs inside the worker.
 _db_ready = False
 _db_init_lock = threading.Lock()
+_SCHEMA_MARKER = "app_schema_v1"
+
+
+def _schema_is_current():
+    with db.connect() as c:
+        row = c.execute(
+            "SELECT 1 ok FROM sqlite_master WHERE type='table' AND name=?",
+            (_SCHEMA_MARKER,),
+        ).fetchone()
+    return bool(row)
 
 
 @app.before_request
@@ -44,9 +55,15 @@ def _ensure_db():
     if not _db_ready:
         with _db_init_lock:
             if not _db_ready:
-                storage.init_db()
-                goals.init_goal_table()
-                portions.init_portion_table()
+                if not _schema_is_current():
+                    storage.init_db()
+                    goals.init_goal_table()
+                    portions.init_portion_table()
+                    with db.connect() as c:
+                        c.execute(
+                            f"CREATE TABLE IF NOT EXISTS {_SCHEMA_MARKER} "
+                            "(id INTEGER PRIMARY KEY)"
+                        )
                 _db_ready = True
 
 
@@ -399,9 +416,12 @@ def preview_targets():
 @app.route("/api/today")
 @login_required
 def today():
-    data = storage.today_data()
+    with db.connect() as c:
+        data = storage.today_data(c)
+        goal = goals.get_goal(c)
+        t = goals.current_targets(c, goal) if goal else None
+        coach = goals.weight_coach(c, goal) if goal else {"active": False}
     # If a goal is set, override the flat config targets with the live ones.
-    t = goals.current_targets()
     if t:
         data["cal_target"] = t["calories"]
         data["protein_target"] = t["protein"]
@@ -409,7 +429,7 @@ def today():
         data["fat_target"] = t["fat"]
         data["goal_weight"] = t["weight"]
         data["calorie_adjustment"] = t.get("calorie_adjustment", 0)
-    data["coach"] = goals.weight_coach()
+    data["coach"] = coach
     return jsonify(data)
 
 

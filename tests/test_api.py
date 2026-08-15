@@ -68,7 +68,8 @@ class TestAPI(unittest.TestCase):
         import portions
         app_mod._db_ready = False
         try:
-            with mock.patch.object(storage, "init_db") as init_storage, \
+            with mock.patch.object(app_mod, "_schema_is_current", return_value=False), \
+                    mock.patch.object(storage, "init_db") as init_storage, \
                     mock.patch.object(goals, "init_goal_table") as init_goals, \
                     mock.patch.object(portions, "init_portion_table") as init_portions:
                 self.client.get("/")
@@ -81,6 +82,13 @@ class TestAPI(unittest.TestCase):
                 init_portions.assert_called_once_with()
         finally:
             app_mod._db_ready = True
+
+    def test_today_uses_one_shared_database_connection(self):
+        app_mod._db_ready = True
+        with mock.patch.object(app_mod.db, "connect", wraps=app_mod.db.connect) as connect:
+            r = self.client.get("/api/today")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(connect.call_count, 1)
 
     # ── /api/log ──
     def test_log_text_food(self):

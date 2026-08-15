@@ -280,9 +280,11 @@ def relog_meal(item_name):
 # ─────────────────────────────────────────────────────────────
 # STREAK
 # ─────────────────────────────────────────────────────────────
-def current_streak():
-    with _conn() as c:
-        rows = c.execute("SELECT day FROM food UNION SELECT day FROM workout").fetchall()
+def current_streak(conn=None):
+    if conn is None:
+        with _conn() as c:
+            return current_streak(c)
+    rows = conn.execute("SELECT day FROM food UNION SELECT day FROM workout").fetchall()
     days = {r["day"] for r in rows}
     if not days:
         return 0
@@ -300,38 +302,40 @@ def current_streak():
 # ─────────────────────────────────────────────────────────────
 # READ — today + lists
 # ─────────────────────────────────────────────────────────────
-def today_data():
+def today_data(conn=None):
+    if conn is None:
+        with _conn() as c:
+            return today_data(c)
     day = _now().strftime("%Y-%m-%d")
-    with _conn() as c:
-        totals = c.execute(
-            "SELECT COALESCE(SUM(calories),0) cal, COALESCE(SUM(protein_g),0) p, "
-            "COALESCE(SUM(carbs_g),0) cb, COALESCE(SUM(fat_g),0) ft, "
-            "COALESCE(SUM(fiber_g),0) fb, COALESCE(SUM(sugar_g),0) sg, COUNT(*) n "
-            "FROM food WHERE day=?", (day,)).fetchone()
-        foods = c.execute(
-            "SELECT id, ts, item_name, calories, protein_g, carbs_g, fat_g "
-            "FROM food WHERE day=? ORDER BY id DESC", (day,)).fetchall()
-        workouts = c.execute(
-            "SELECT id, ts, exercise_name, weight_kg, sets, reps, notes "
-            "FROM workout WHERE day=? ORDER BY id DESC", (day,)).fetchall()
-        waters = c.execute(
-            "SELECT id, ts, ml FROM water WHERE day=? ORDER BY id DESC", (day,)).fetchall()
-        today_weight = c.execute(
-            "SELECT weight_kg FROM weight WHERE day=? ORDER BY id DESC LIMIT 1",
-            (day,),
-        ).fetchone()
+    foods = conn.execute(
+        "SELECT id, ts, item_name, calories, protein_g, carbs_g, fat_g, "
+        "fiber_g, sugar_g FROM food WHERE day=? ORDER BY id DESC", (day,)).fetchall()
+    workouts = conn.execute(
+        "SELECT id, ts, exercise_name, weight_kg, sets, reps, notes "
+        "FROM workout WHERE day=? ORDER BY id DESC", (day,)).fetchall()
+    waters = conn.execute(
+        "SELECT id, ts, ml FROM water WHERE day=? ORDER BY id DESC", (day,)).fetchall()
+    today_weight = conn.execute(
+        "SELECT weight_kg FROM weight WHERE day=? ORDER BY id DESC LIMIT 1",
+        (day,),
+    ).fetchone()
+    totals = {
+        "calories": sum((r["calories"] or 0 for r in foods), 0),
+        "protein": sum((r["protein_g"] or 0 for r in foods), 0),
+        "carbs": sum((r["carbs_g"] or 0 for r in foods), 0),
+        "fat": sum((r["fat_g"] or 0 for r in foods), 0),
+        "fiber": sum((r["fiber_g"] or 0 for r in foods), 0),
+        "sugar": sum((r["sugar_g"] or 0 for r in foods), 0),
+        "meals": len(foods),
+    }
     return {
-        "totals": {
-            "calories": totals["cal"], "protein": totals["p"], "carbs": totals["cb"],
-            "fat": totals["ft"], "fiber": totals["fb"], "sugar": totals["sg"],
-            "meals": totals["n"],
-        },
+        "totals": totals,
         "foods": [dict(r) for r in foods],
         "workouts": [dict(r) for r in workouts],
         "waters": [dict(r) for r in waters],
         "water_total": sum((r["ml"] for r in waters), 0),
         "water_target": config.WATER_TARGET_ML,
-        "streak": current_streak(),
+        "streak": current_streak(conn),
         "cal_target": config.DAILY_CAL_TARGET,
         "protein_target": config.DAILY_PROTEIN_TARGET,
         "today_weight": today_weight["weight_kg"] if today_weight else None,
