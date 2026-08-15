@@ -221,6 +221,18 @@ class TestAPI(unittest.TestCase):
         self.assertIn("cal_target", t)
         self.assertGreater(t["cal_target"], 0)
 
+    def test_lean_bulk_exposes_weight_coach_and_daily_status(self):
+        self.client.post("/api/goal", json={
+            "height_cm": 180, "age": 24, "sex": "male",
+            "activity": "moderate", "objective": "lean_bulk",
+            "weight_kg": 76.5})
+        today = self.client.get("/api/today").get_json()
+        self.assertTrue(today["coach"]["active"])
+        self.assertFalse(today["weigh_in_due"])
+        progress = self.client.get("/api/progress?days=60").get_json()
+        self.assertTrue(progress["coach"]["active"])
+        self.assertEqual(progress["calorie_adjustment"], 0)
+
     # ── analytics / export ──
     def test_analytics_reflects_db(self):
         self.client.post("/api/confirm", json={

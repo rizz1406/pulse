@@ -305,6 +305,17 @@ h2.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:va
 .pace-line{font-size:15px;line-height:1.6}
 .pace-good{color:var(--accent)} .pace-warn{color:var(--fat)}
 .pace-note{color:var(--muted);font-size:13px;margin-top:10px;line-height:1.5}
+.coach-title{font-family:'Space Grotesk';font-weight:700;color:var(--accent);font-size:16px}
+.coach-stats{margin-top:12px;color:var(--ink);font-size:14px}.coach-stats span{color:var(--muted);margin:0 6px}
+.coach-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}
+.coach-grid div{background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:10px 6px;text-align:center}
+.coach-grid b{display:block;font-family:'Space Grotesk';font-size:15px;color:var(--ink)}
+.coach-grid span{display:block;color:var(--muted);font-size:9px;margin-top:3px;text-transform:uppercase}
+.coach-reminder{margin-top:14px;background:transparent;border:1px solid var(--line-bright);color:var(--muted);border-radius:10px;padding:9px 12px;font-size:12px;cursor:pointer}
+.weight-prompt-label{display:block;margin-top:18px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+.weight-prompt-label input{display:block;width:100%;box-sizing:border-box;margin-top:6px;background:var(--panel-2);border:1px solid var(--line-bright);color:var(--ink);padding:15px;border-radius:13px;font-size:22px;outline:none}
+.weight-prompt-label input:focus{border-color:var(--accent)}
+.reminder-disable{display:block;margin:14px auto 0;background:none;border:0;color:var(--muted);font-size:12px;text-decoration:underline;cursor:pointer}
 /* Progress photos */
 .photo-scroll{display:flex;gap:10px;overflow-x:auto;padding:2px 2px 6px;-webkit-overflow-scrolling:touch}
 .photo-scroll img{width:92px;height:120px;object-fit:cover;border-radius:14px;cursor:pointer;flex-shrink:0;border:1px solid var(--line-bright)}

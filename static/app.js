@@ -81,9 +81,30 @@ async function loadProgress(){
     ${d.start!=null?`<div class="lost">${lost>0?'Down':'Up'} <b>${Math.abs(lost)}kg</b> from ${d.start}kg</div>`:''}`;
   // weight chart
   drawLine('weightTrend',d.weights.map(w=>w.day),[{label:'kg',data:d.weights.map(w=>w.kg),color:'#c4ff4d',fill:true,spanGaps:true}]);
-  // pace
+  // pace / adaptive lean-bulk coach
   const pace=document.getElementById('paceBox');
-  if(d.rate_kg_per_week==null){
+  if(d.coach&&d.coach.active){
+    const c=d.coach;
+    const reminderOff=localStorage.getItem('pulse-weight-reminder-disabled')==='1';
+    if(!c.enough_data){
+      pace.innerHTML=`<div class="coach-title">Lean-bulk coach is collecting your baseline</div>
+        <div class="coach-stats"><b>${c.weigh_ins}/7</b> weigh-ins <span>·</span> <b>${c.span_days}/14</b> days</div>
+        <div class="pace-note">Daily morning weigh-ins are averaged, so water and meal fluctuations do not change your calories.</div>
+        <button class="coach-reminder" onclick="toggleWeightReminder()">${reminderOff?'Enable':'Disable'} daily reminder</button>`;
+    }else{
+      const rate=Number(c.rate_kg_per_week);
+      const onTarget=rate>=c.target_min&&rate<=c.target_max;
+      const adj=Number(c.calorie_adjustment||0);
+      pace.innerHTML=`<div class="pace-line ${onTarget?'pace-good':'pace-warn'}">${onTarget?'On target':'Adjusting carefully'} · ${rate>=0?'+':''}${rate.toFixed(2)} kg/week</div>
+        <div class="coach-grid">
+          <div><b>${Number(c.average_7d).toFixed(2)} kg</b><span>7-day average</span></div>
+          <div><b>${c.target_min}–${c.target_max}</b><span>kg/week goal</span></div>
+          <div><b>${adj>=0?'+':''}${adj} kcal</b><span>adaptive change</span></div>
+        </div>
+        <div class="pace-note">Next review ${c.next_review}. Changes happen at most weekly and are capped at 100–150 kcal per review.</div>
+        <button class="coach-reminder" onclick="toggleWeightReminder()">${reminderOff?'Enable':'Disable'} daily reminder</button>`;
+    }
+  } else if(d.rate_kg_per_week==null){
     pace.innerHTML='<div class="pace-note">Log your weight a few more times (a week apart) to see your pace.</div>';
   } else {
     const rate=d.rate_kg_per_week;
@@ -453,9 +474,56 @@ function successBurst(){
 let currentDays=30;
 async function refreshToday(){
   const d=await getJSON('/api/today');
-  if(d) renderToday(d);
+  if(d){ renderToday(d); maybePromptDailyWeight(d); }
   loadWeeklyStreak(); // fire-and-forget, doesn't block the UI
   loadRecap();        // AI weekly summary (fire-and-forget)
+}
+
+function localDay(){
+  const n=new Date(), pad=v=>String(v).padStart(2,'0');
+  return `${n.getFullYear()}-${pad(n.getMonth()+1)}-${pad(n.getDate())}`;
+}
+function maybePromptDailyWeight(d){
+  if(!d.weigh_in_due||!d.coach||!d.coach.active||!navigator.onLine) return;
+  if(localStorage.getItem('pulse-weight-reminder-disabled')==='1') return;
+  const day=localDay();
+  if(localStorage.getItem('pulse-weight-reminder-seen')===day) return;
+  if(document.getElementById('overlay').classList.contains('show')) return;
+  localStorage.setItem('pulse-weight-reminder-seen',day);
+  document.getElementById('sheet').innerHTML=`
+    <div class="ph">⚖️ Morning weigh-in</div>
+    <div class="pace-note">For the cleanest trend, weigh after the bathroom and before food or water.</div>
+    <label class="weight-prompt-label">Weight (kg)
+      <input id="dailyWeightInput" type="number" min="30" max="300" step="0.1" inputmode="decimal" placeholder="76.5">
+    </label>
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeSheet()">Later</button>
+      <button class="btn-save" onclick="submitDailyWeight()">Log weight</button>
+    </div>
+    <button class="reminder-disable" onclick="dismissWeightReminder()">Don't remind me daily</button>`;
+  document.getElementById('overlay').classList.add('show');
+  setTimeout(()=>document.getElementById('dailyWeightInput')?.focus(),250);
+}
+async function submitDailyWeight(){
+  const input=document.getElementById('dailyWeightInput');
+  const kg=Number(input&&input.value);
+  if(!(kg>=30&&kg<=300)) return toast('Enter a valid weight');
+  const r=await fetch('/api/confirm',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({type:'weight',weight_kg:kg,notes:'daily check-in'})});
+  const d=await r.json();
+  if(!r.ok||!d.ok) return toast(d.error||'Could not log weight');
+  closeSheet(); toast('Weight logged · trend updated'); refreshToday();
+}
+function dismissWeightReminder(){
+  localStorage.setItem('pulse-weight-reminder-disabled','1');
+  closeSheet(); toast('Daily reminder disabled');
+}
+function toggleWeightReminder(){
+  const disabled=localStorage.getItem('pulse-weight-reminder-disabled')==='1';
+  if(disabled) localStorage.removeItem('pulse-weight-reminder-disabled');
+  else localStorage.setItem('pulse-weight-reminder-disabled','1');
+  toast(disabled?'Daily reminder enabled':'Daily reminder disabled');
+  loadProgress();
 }
 
 async function loadSuggestions(){

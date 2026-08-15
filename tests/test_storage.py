@@ -70,6 +70,13 @@ class TestStorage(unittest.TestCase):
         t = storage.weight_trend(60)
         self.assertEqual(t["current"], 77.5)
 
+    def test_today_reports_daily_weigh_in_status(self):
+        self.assertTrue(storage.today_data()["weigh_in_due"])
+        storage.save_weight(76.5, "morning")
+        today = storage.today_data()
+        self.assertFalse(today["weigh_in_due"])
+        self.assertEqual(today["today_weight"], 76.5)
+
     def test_progress_photos(self):
         storage.save_weight(77.5, "weigh-in", "data:image/jpeg;base64,AAAA")
         storage.save_weight(76.9, "weigh-in")

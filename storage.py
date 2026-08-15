@@ -116,6 +116,7 @@ def save_weight(kg, notes="", photo=None):
         c.execute("INSERT INTO weight (ts, day, weight_kg, notes, photo) VALUES (?,?,?,?,?)",
                   (now.strftime("%Y-%m-%d %H:%M:%S"), now.strftime("%Y-%m-%d"),
                    _float(kg), notes, photo or ""))
+    goals.maybe_adapt_targets()
 
 
 def delete_entry(kind, entry_id):
@@ -315,6 +316,10 @@ def today_data():
             "FROM workout WHERE day=? ORDER BY id DESC", (day,)).fetchall()
         waters = c.execute(
             "SELECT id, ts, ml FROM water WHERE day=? ORDER BY id DESC", (day,)).fetchall()
+        today_weight = c.execute(
+            "SELECT weight_kg FROM weight WHERE day=? ORDER BY id DESC LIMIT 1",
+            (day,),
+        ).fetchone()
     return {
         "totals": {
             "calories": totals["cal"], "protein": totals["p"], "carbs": totals["cb"],
@@ -329,6 +334,8 @@ def today_data():
         "streak": current_streak(),
         "cal_target": config.DAILY_CAL_TARGET,
         "protein_target": config.DAILY_PROTEIN_TARGET,
+        "today_weight": today_weight["weight_kg"] if today_weight else None,
+        "weigh_in_due": today_weight is None,
     }
 
 

@@ -327,6 +327,8 @@ def progress():
     if t:
         data["target_cal"] = t["calories"]
         data["objective"] = t.get("objective")
+        data["calorie_adjustment"] = t.get("calorie_adjustment", 0)
+    data["coach"] = goals.weight_coach()
     g = goals.get_goal()
     data["bmi"] = goals.bmi(data.get("current"), g.get("height_cm") if g else None)
     return jsonify(data)
@@ -400,6 +402,8 @@ def today():
         data["carb_target"] = t["carbs"]
         data["fat_target"] = t["fat"]
         data["goal_weight"] = t["weight"]
+        data["calorie_adjustment"] = t.get("calorie_adjustment", 0)
+    data["coach"] = goals.weight_coach()
     return jsonify(data)
 
 

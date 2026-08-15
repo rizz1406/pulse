@@ -8,7 +8,7 @@ preserve muscle on a cut.
 """
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import config
 import db
@@ -32,6 +32,10 @@ PROTEIN_PER_KG = {
     "cut_steady": 2.0, "cut_fast": 2.2, "maintain": 1.8, "lean_bulk": 2.0,
 }
 
+LEAN_BULK_MIN_GAIN = 0.15
+LEAN_BULK_MAX_GAIN = 0.25
+MAX_CALORIE_ADJUSTMENT = 500
+
 
 def _conn():
     return db.connect()
@@ -44,8 +48,18 @@ def init_goal_table():
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 height_cm REAL, age INTEGER, sex TEXT,
                 activity TEXT, objective TEXT,
-                start_weight REAL, updated TEXT
+                start_weight REAL, updated TEXT,
+                calorie_adjustment INTEGER DEFAULT 0,
+                last_adapted TEXT
             )""")
+        for statement in (
+            "ALTER TABLE goal ADD COLUMN calorie_adjustment INTEGER DEFAULT 0",
+            "ALTER TABLE goal ADD COLUMN last_adapted TEXT",
+        ):
+            try:
+                c.execute(statement)
+            except (sqlite3.OperationalError, ValueError):
+                pass
 
 
 def calculate(weight_kg, height_cm, age, sex, activity, objective):
@@ -93,10 +107,12 @@ def save_goal(height_cm, age, sex, activity, objective, current_weight):
     with _conn() as c:
         c.execute(
             "INSERT INTO goal (id, height_cm, age, sex, activity, objective, "
-            "start_weight, updated) VALUES (1,?,?,?,?,?,?,?) "
+            "start_weight, updated, calorie_adjustment, last_adapted) "
+            "VALUES (1,?,?,?,?,?,?,?,0,NULL) "
             "ON CONFLICT(id) DO UPDATE SET height_cm=excluded.height_cm, "
             "age=excluded.age, sex=excluded.sex, activity=excluded.activity, "
-            "objective=excluded.objective, updated=excluded.updated",
+            "objective=excluded.objective, start_weight=excluded.start_weight, "
+            "updated=excluded.updated, calorie_adjustment=0, last_adapted=NULL",
             (height_cm, age, sex, activity, objective, current_weight,
              datetime.now(config.LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")),
         )
@@ -128,6 +144,111 @@ def current_targets():
     weight = latest_weight() or g["start_weight"]
     t = calculate(weight, g["height_cm"], g["age"], g["sex"],
                   g["activity"], g["objective"])
+    adjustment = int(g.get("calorie_adjustment") or 0)
+    t["base_calories"] = t["calories"]
+    t["calorie_adjustment"] = adjustment
+    t["calories"] += adjustment
+    t["carbs"] = max(round(
+        (t["calories"] - (t["protein"] * 4 + t["fat"] * 9)) / 4
+    ), 0)
     t["weight"] = weight
     t["objective"] = g["objective"]
     return t
+
+
+def _lean_bulk_trend(g):
+    """Return a stable rate from two non-overlapping weigh-in windows."""
+    today = datetime.now(config.LOCAL_TZ).date()
+    goal_day = datetime.strptime(g["updated"][:10], "%Y-%m-%d").date()
+    start = max(goal_day, today - timedelta(days=27)).isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT day, AVG(weight_kg) w FROM weight WHERE day>=? "
+            "GROUP BY day ORDER BY day", (start,),
+        ).fetchall()
+    points = [(datetime.strptime(r["day"], "%Y-%m-%d").date(), float(r["w"]))
+              for r in rows]
+    span = (points[-1][0] - points[0][0]).days if len(points) > 1 else 0
+    if len(points) < 7 or span < 14:
+        return {"enough_data": False, "weigh_ins": len(points), "span_days": span}
+
+    last_day = points[-1][0]
+    recent_start = last_day - timedelta(days=6)
+    earlier_start = last_day - timedelta(days=13)
+    earlier_end = last_day - timedelta(days=7)
+    earlier = [p for p in points if earlier_start <= p[0] <= earlier_end]
+    recent = [p for p in points if p[0] >= recent_start]
+    if len(earlier) < 2 or len(recent) < 2:
+        return {"enough_data": False, "weigh_ins": len(points), "span_days": span}
+    earlier_avg = sum(p[1] for p in earlier) / len(earlier)
+    recent_avg = sum(p[1] for p in recent) / len(recent)
+    earlier_day = sum(p[0].toordinal() for p in earlier) / len(earlier)
+    recent_day = sum(p[0].toordinal() for p in recent) / len(recent)
+    weeks = max((recent_day - earlier_day) / 7, 0.1)
+    return {
+        "enough_data": True,
+        "weigh_ins": len(points),
+        "span_days": span,
+        "average_7d": round(recent_avg, 2),
+        "previous_average_7d": round(earlier_avg, 2),
+        "rate_kg_per_week": round((recent_avg - earlier_avg) / weeks, 2),
+    }
+
+
+def _recommended_adjustment(rate):
+    if rate < 0.10:
+        return 150
+    if rate < LEAN_BULK_MIN_GAIN:
+        return 100
+    if rate <= LEAN_BULK_MAX_GAIN:
+        return 0
+    if rate <= 0.35:
+        return -100
+    return -150
+
+
+def weight_coach():
+    """Describe the lean-bulk trend and whether the next review is due."""
+    g = get_goal()
+    if not g or g["objective"] != "lean_bulk":
+        return {"active": False}
+    trend = _lean_bulk_trend(g)
+    today = datetime.now(config.LOCAL_TZ).date()
+    last = g.get("last_adapted")
+    next_review = ((datetime.strptime(last[:10], "%Y-%m-%d").date()
+                    + timedelta(days=7)) if last else
+                   (datetime.strptime(g["updated"][:10], "%Y-%m-%d").date()
+                    + timedelta(days=14)))
+    trend.update({
+        "active": True,
+        "target_min": LEAN_BULK_MIN_GAIN,
+        "target_max": LEAN_BULK_MAX_GAIN,
+        "calorie_adjustment": int(g.get("calorie_adjustment") or 0),
+        "next_review": next_review.isoformat(),
+        "review_due": today >= next_review,
+    })
+    if trend["enough_data"]:
+        trend["recommended_change"] = _recommended_adjustment(
+            trend["rate_kg_per_week"])
+    else:
+        trend["recommended_change"] = 0
+    return trend
+
+
+def maybe_adapt_targets():
+    """Review a lean bulk at most weekly after 14 days of useful data."""
+    coach = weight_coach()
+    if not coach.get("active") or not coach.get("enough_data") \
+            or not coach.get("review_due"):
+        return coach
+    g = get_goal()
+    current = int(g.get("calorie_adjustment") or 0)
+    updated = max(-MAX_CALORIE_ADJUSTMENT, min(
+        MAX_CALORIE_ADJUSTMENT, current + coach["recommended_change"]))
+    now = datetime.now(config.LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    with _conn() as c:
+        c.execute(
+            "UPDATE goal SET calorie_adjustment=?, last_adapted=? WHERE id=1",
+            (updated, now),
+        )
+    return weight_coach()
