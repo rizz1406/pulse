@@ -51,6 +51,14 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT, day TEXT, ml INTEGER
             )""")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS custom_food (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT COLLATE NOCASE UNIQUE,
+                serving_g REAL, calories INTEGER,
+                protein_g REAL, carbs_g REAL, fat_g REAL,
+                fiber_g REAL, sugar_g REAL
+            )""")
 
 
 def _now():
@@ -81,9 +89,9 @@ def save_food(d):
             "INSERT INTO food (ts, day, item_name, calories, protein_g, carbs_g, "
             "fat_g, fiber_g, sugar_g, notes, raw_input) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (now.strftime("%Y-%m-%d %H:%M:%S"), now.strftime("%Y-%m-%d"),
-             d["item_name"], _int(d["calories"]), _int(d["protein_g"]),
-             _int(d["carbs_g"]), _int(d["fat_g"]),
-             _int(d.get("fiber_g", 0)), _int(d.get("sugar_g", 0)),
+             d["item_name"], _int(d["calories"]), _float(d["protein_g"]),
+             _float(d["carbs_g"]), _float(d["fat_g"]),
+             _float(d.get("fiber_g")), _float(d.get("sugar_g")),
              d.get("confidence_notes", ""), d.get("_raw", "")),
         )
         return c.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
@@ -164,13 +172,62 @@ def update_food(entry_id, fields):
     for k, v in fields.items():
         if k in allowed:
             sets.append(f"{k}=?")
-            vals.append(_int(v) if k in numeric else str(v))
+            vals.append((_int(v) if k == "calories" else _float(v))
+                        if k in numeric else str(v))
     if not sets:
         return False
     vals.append(entry_id)
     with _conn() as c:
         c.execute(f"UPDATE food SET {','.join(sets)} WHERE id=?", vals)
     return True
+
+
+def save_custom_food(d):
+    """Create or replace a package-label/custom serving definition."""
+    name = str(d.get("name") or d.get("item_name") or "").strip()
+    serving_g = _float(d.get("serving_g"))
+    if not name or serving_g <= 0:
+        return False
+    values = (name, serving_g, _int(d.get("calories")),
+              _float(d.get("protein_g")), _float(d.get("carbs_g")),
+              _float(d.get("fat_g")),
+              None if d.get("fiber_g") in (None, "") else _float(d.get("fiber_g")),
+              None if d.get("sugar_g") in (None, "") else _float(d.get("sugar_g")))
+    with _conn() as c:
+        c.execute("DELETE FROM custom_food WHERE LOWER(name)=LOWER(?)", (name,))
+        c.execute("INSERT INTO custom_food (name,serving_g,calories,protein_g,"
+                  "carbs_g,fat_g,fiber_g,sugar_g) VALUES (?,?,?,?,?,?,?,?)", values)
+    return True
+
+
+def custom_foods():
+    with _conn() as c:
+        rows = c.execute("SELECT * FROM custom_food ORDER BY name").fetchall()
+    return [dict(r) for r in rows]
+
+
+def parse_custom_food(text):
+    """Scale a saved custom food by explicit grams or serving count."""
+    import fooddb
+    qty, _key, cleaned, gram_mode, ml_mode, _unit = fooddb._extract_qty(text.lower())
+    query = cleaned.lower()
+    matches = [r for r in custom_foods() if r["name"].lower() in query]
+    if not matches:
+        return None
+    row = max(matches, key=lambda r: len(r["name"]))
+    amount_g = qty * 100 if gram_mode else row["serving_g"] * qty
+    mult = amount_g / row["serving_g"]
+    label = (f"{amount_g:g}{'ml' if ml_mode else 'g'} {row['name']}"
+             if gram_mode else
+             f"{qty:g} {row['name']}" if qty != 1 else row["name"])
+    return fooddb._build_result(
+        label, round(row["calories"] * mult),
+        round(row["protein_g"] * mult, 1), round(row["carbs_g"] * mult, 1),
+        round(row["fat_g"] * mult, 1), "custom", row["name"],
+        row["serving_g"], qty,
+        f"custom label: {row['name']} ({row['serving_g']:g}g/serving)",
+        fiber=None if row["fiber_g"] is None else round(row["fiber_g"] * mult, 1),
+        sugar=None if row["sugar_g"] is None else round(row["sugar_g"] * mult, 1))
 
 
 def update_workout(entry_id, fields):

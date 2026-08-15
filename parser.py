@@ -23,6 +23,7 @@ from openai import OpenAI
 import config
 import fooddb
 import portions
+import storage
 
 # Lazy client — created on first use, not at import time.
 _client = None
@@ -315,6 +316,19 @@ def _user_text(text):
     return re.sub(r'^\s*user\s+input\s*:\s*', '', text, flags=re.I).strip()
 
 
+def _strict_accuracy_message(text):
+    """Require preparation state where water gain/loss changes per-100g data."""
+    t = text.lower()
+    if not re.search(r'\d+(?:\.\d+)?\s*(?:g|gm|gms|grams?)\b', t):
+        return ""
+    cooked_refs = ("rice", "chicken breast", "chicken thigh", "dal", "pasta", "noodles")
+    if any(food in t for food in cooked_refs) and not re.search(r'\b(raw|cooked|boiled|grilled|roasted)\b', t):
+        return "For accurate macros, specify raw or cooked weight (for example, '200g cooked rice')."
+    if "oats" in t and not re.search(r'\b(dry|cooked)\b', t):
+        return "For accurate macros, specify dry or cooked oats (for example, '50g dry oats')."
+    return ""
+
+
 def _norm_keys(d):
     """Normalize AI response keys to lowercase recursively. Groq sometimes
     returns 'TYPE' instead of 'type', 'ITEM_NAME' instead of 'item_name', etc."""
@@ -385,6 +399,12 @@ def parse(payload):
             return {"type": "chat", "reply": (
                 "Did you mean grams? Use 'g' (for example, '50g nuts'). "
                 "'mg' means milligrams and is 1,000 times smaller.")}
+        strict_message = _strict_accuracy_message(text_bits)
+        if strict_message:
+            return {"type": "chat", "reply": strict_message}
+        custom_food = storage.parse_custom_food(_user_text(text_bits))
+        if custom_food:
+            return custom_food
         local_food = fooddb.parse_local(text_bits)
         if local_food:
             return local_food

@@ -19,7 +19,7 @@ config.LOCAL_TZ = __import__("zoneinfo").ZoneInfo("UTC")
 
 def clean():
     with db.connect() as c:
-        for t in ("food", "workout", "weight", "water", "goal", "portion_memory"):
+        for t in ("food", "workout", "weight", "water", "goal", "portion_memory", "custom_food"):
             c.execute(f"DELETE FROM {t}")
 
 
@@ -41,6 +41,25 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(d["totals"]["calories"], 140)
         self.assertEqual(d["totals"]["meals"], 1)
         self.assertEqual(d["foods"][0]["item_name"], "2 eggs")
+
+    def test_custom_food_scales_exact_label_values(self):
+        self.assertTrue(storage.save_custom_food({
+            "name": "My Whey", "serving_g": 30, "calories": 120,
+            "protein_g": 24.5, "carbs_g": 3, "fat_g": 1.5,
+            "fiber_g": None, "sugar_g": 1,
+        }))
+        d = storage.parse_custom_food("60g my whey")
+        self.assertEqual(d["calories"], 240)
+        self.assertEqual(d["protein_g"], 49.0)
+        self.assertEqual(d["source"], "custom")
+        self.assertIsNone(d["fiber_g"])
+
+    def test_decimal_macros_survive_storage(self):
+        storage.save_food({"item_name": "Half banana", "calories": 44,
+                           "protein_g": 0.5, "carbs_g": 11.5, "fat_g": 0})
+        d = storage.today_data()
+        self.assertEqual(d["totals"]["protein"], 0.5)
+        self.assertEqual(d["totals"]["carbs"], 11.5)
 
     def test_workout_and_weight(self):
         storage.save_workout({"exercise_name": "Squat", "weight_kg": 60,

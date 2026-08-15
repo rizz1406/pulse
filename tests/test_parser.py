@@ -47,6 +47,16 @@ class TestParser(unittest.TestCase):
         self.assertEqual(d["type"], "chat")
         self.assertIn("1,000 times smaller", d["reply"])
 
+    def test_weighted_staple_requires_raw_or_cooked(self):
+        d = parser.parse(["User input: 200g rice"])
+        self.assertEqual(d["type"], "chat")
+        self.assertIn("raw or cooked", d["reply"])
+
+    def test_dry_or_cooked_oats_required(self):
+        d = parser.parse(["User input: 50g oats"])
+        self.assertEqual(d["type"], "chat")
+        self.assertIn("dry or cooked oats", d["reply"])
+
     def test_parse_food_falls_back_to_gemini_for_unknown(self):
         """Unknown food goes to Gemini for classification."""
         self._fake_generate({

@@ -367,7 +367,7 @@ def _calc_serving_nutrition(cal, p, c, f, qty):
 
 def _build_result(item_name, cal, p, c, f, source, matched_food,
                   serving_g, qty, notes="", needs_clarify=False,
-                  clarify_q="", clarify_opts=None):
+                  clarify_q="", clarify_opts=None, fiber=None, sugar=None):
     """Build the standard food result dict with full audit trail."""
     return {
         "type": "food",
@@ -376,8 +376,8 @@ def _build_result(item_name, cal, p, c, f, source, matched_food,
         "protein_g": p,
         "carbs_g": c,
         "fat_g": f,
-        "fiber_g": 0,
-        "sugar_g": 0,
+        "fiber_g": fiber,
+        "sugar_g": sugar,
         "confidence_notes": notes,
         "needs_clarification": needs_clarify,
         "clarify_question": clarify_q,
@@ -387,7 +387,16 @@ def _build_result(item_name, cal, p, c, f, source, matched_food,
         "matched_food": matched_food,
         "serving_g": serving_g,
         "qty": qty,
+        "accuracy_warnings": _nutrition_warnings(cal, p, c, f),
     }
+
+
+def _nutrition_warnings(cal, p, c, f):
+    """Flag implausible calorie/macro combinations without changing data."""
+    macro_cal = float(p or 0) * 4 + float(c or 0) * 4 + float(f or 0) * 9
+    if cal and macro_cal and abs(macro_cal - cal) > max(50, cal * 0.2):
+        return [f"Calories and macros differ by {round(abs(macro_cal-cal))} kcal; verify the label or portion."]
+    return []
 
 
 # ─────────────────────────────────────────────────────────────
@@ -463,6 +472,14 @@ def _parse_single(text):
 
     t = text.strip().lower()
     gram_mode = False
+
+    # Local weighted references for these foods are cooked (oats are dry).
+    # Route the opposite preparation to FatSecret instead of mis-scaling it.
+    if "raw" in t and any(x in t for x in
+                          ("rice", "chicken breast", "chicken thigh", "dal", "pasta", "noodles")):
+        return None
+    if "cooked" in t and "oats" in t:
+        return None
 
     # Extract quantity + unit
     result = _extract_qty(t)
@@ -895,6 +912,8 @@ def _fs_parse_metric_serving(food, summary=None):
         return None
 
     scale = 100.0 / amount
+    fiber = None if serving.get("fiber") in (None, "") else float(serving["fiber"])
+    sugar = None if serving.get("sugar") in (None, "") else float(serving["sugar"])
     return {
         # Keep precision until the user's requested amount is calculated.
         "cal_per100g": cal * scale,
@@ -905,7 +924,10 @@ def _fs_parse_metric_serving(food, summary=None):
         "ref_unit": unit,
         "orig_unit": str(serving.get("measurement_description", "serving")).lower(),
         "orig_amount": float(serving.get("number_of_units", 1) or 1),
-        "per_serving": {"cal": cal, "p": p, "c": c, "f": f},
+        "fiber_per100g": None if fiber is None else fiber * scale,
+        "sugar_per100g": None if sugar is None else sugar * scale,
+        "per_serving": {"cal": cal, "p": p, "c": c, "f": f,
+                        "fiber": fiber, "sugar": sugar},
         "real_serving_g": amount if unit == "g" else None,
     }
 
@@ -1069,6 +1091,14 @@ def parse_fatsecret(text):
             parsed["c_per100g"], parsed["f_per100g"],
             serving_g, qty, gram_mode)
 
+    fiber = sugar = None
+    if parsed.get("fiber_per100g") is not None:
+        mult = qty if gram_mode else serving_g * qty / 100.0
+        fiber = round(parsed["fiber_per100g"] * mult, 1)
+    if parsed.get("sugar_per100g") is not None:
+        mult = qty if gram_mode else serving_g * qty / 100.0
+        sugar = round(parsed["sugar_per100g"] * mult, 1)
+
     # Build description of what we matched
     desc = raw_item.get("food_description", "")
     per_info = f" ({desc})" if desc else ""
@@ -1093,6 +1123,7 @@ def parse_fatsecret(text):
         serving_g=serving_g,
         qty=qty,
         notes=f"FatSecret: {name}{per_info} [score={score}, {portion_note}]",
+        fiber=fiber, sugar=sugar,
     )
 
 

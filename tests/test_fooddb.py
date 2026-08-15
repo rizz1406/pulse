@@ -261,6 +261,19 @@ class TestFoodDB(unittest.TestCase):
         self.assertEqual(d["protein_g"], 0.5)
         self.assertEqual(d["carbs_g"], 11.5)
 
+    def test_raw_food_does_not_use_cooked_local_reference(self):
+        self.assertIsNone(fooddb.parse_local("200g raw rice"))
+
+    def test_unknown_secondary_nutrients_are_not_zero(self):
+        d = fooddb.parse_local("1 banana")
+        self.assertIsNone(d["fiber_g"])
+        self.assertIsNone(d["sugar_g"])
+
+    def test_macro_calorie_mismatch_gets_warning(self):
+        d = fooddb._build_result("Label", 100, 30, 30, 20,
+                                 "custom", "Label", 100, 1)
+        self.assertTrue(d["accuracy_warnings"])
+
     def test_explicit_ml_juice(self):
         """'250ml juice' = 113 kcal."""
         d = fooddb.parse_local("250ml juice")

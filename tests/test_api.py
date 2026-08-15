@@ -38,7 +38,7 @@ class TestAPI(unittest.TestCase):
         # wipe all tables
         from db import connect
         with connect() as c:
-            for t in ("food", "workout", "weight", "water", "goal", "portion_memory"):
+            for t in ("food", "workout", "weight", "water", "goal", "portion_memory", "custom_food"):
                 c.execute(f"DELETE FROM {t}")
         # reset session and log in fresh (app._ensure_db also runs on request)
         with self.client.session_transaction() as s:
@@ -113,6 +113,12 @@ class TestAPI(unittest.TestCase):
 
     def test_confirm_water_bad_ml(self):
         r = self.client.post("/api/confirm", json={"type": "water", "ml": "x"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_confirm_rejects_negative_nutrition(self):
+        r = self.client.post("/api/confirm", json={
+            "type": "food", "item_name": "Bad label", "calories": -1,
+            "protein_g": 10, "carbs_g": 10, "fat_g": 1})
         self.assertEqual(r.status_code, 400)
 
     # ── full journey: log → confirm → today → edit → delete ──
@@ -300,6 +306,20 @@ class TestAPI(unittest.TestCase):
     def test_autocomplete_short_query(self):
         r = self.client.get("/api/autocomplete?q=")
         self.assertEqual(r.get_json()["suggestions"], [])
+
+    def test_custom_food_api_and_autocomplete(self):
+        r = self.client.post("/api/custom_food", json={
+            "name": "My Whey", "serving_g": 30, "calories": 120,
+            "protein_g": 24.5, "carbs_g": 3, "fat_g": 1.5})
+        self.assertEqual(r.status_code, 200)
+        foods = self.client.get("/api/custom_food").get_json()["foods"]
+        self.assertEqual(foods[0]["name"], "My Whey")
+        suggestions = self.client.get("/api/autocomplete?q=whey").get_json()["suggestions"]
+        self.assertEqual(suggestions[0]["source"], "custom")
+
+    def test_custom_food_validation(self):
+        r = self.client.post("/api/custom_food", json={"name": "", "serving_g": 0})
+        self.assertEqual(r.status_code, 400)
 
     # ── /api/suggest ──
     def test_suggest_returns_remaining_and_suggestions(self):

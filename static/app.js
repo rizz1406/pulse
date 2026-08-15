@@ -1,5 +1,6 @@
 let pending=null, charts={};
 const fmtMacro=v=>{const n=Number(v);return Number.isFinite(n)?Number(n.toFixed(1)):0;};
+const fmtOptional=v=>v==null?'—':`${fmtMacro(v)}g`;
 
 /* ---------- AUTH ---------- */
 async function checkAuth(){
@@ -236,17 +237,29 @@ function handleResult(d){
   const s=document.getElementById('sheet');
   if(d.type==='food'){
     const noNutrition = d.calories===0 && d.source==='gemini_fallback';
+    const warnings=(d.accuracy_warnings||[]).map(w=>`<div class="accuracy-warning">⚠️ ${esc(w)}</div>`).join('');
     s.innerHTML=`<div class="ph">🍽 ${esc(d.item_name)}</div>
       <div class="kcal">${d.calories} kcal</div>
       <div class="macros">
         <span>💪 ${fmtMacro(d.protein_g)}g protein</span><span>🍞 ${fmtMacro(d.carbs_g)}g carbs</span><span>🥑 ${fmtMacro(d.fat_g)}g fat</span>
-        <span>🌾 ${d.fiber_g}g fiber</span><span>🍬 ${d.sugar_g}g sugar</span></div>
+        <span>🌾 ${fmtOptional(d.fiber_g)} fiber</span><span>🍬 ${fmtOptional(d.sugar_g)} sugar</span></div>
+      <div class="food-edit-grid">
+        <label class="wide">Food<input id="pv_name" value="${esc(d.item_name)}"></label>
+        <label>kcal<input id="pv_cal" type="number" min="0" value="${d.calories}"></label>
+        <label>Protein<input id="pv_p" type="number" min="0" step="0.1" value="${d.protein_g}"></label>
+        <label>Carbs<input id="pv_c" type="number" min="0" step="0.1" value="${d.carbs_g}"></label>
+        <label>Fat<input id="pv_f" type="number" min="0" step="0.1" value="${d.fat_g}"></label>
+        <label>Fiber<input id="pv_fb" type="number" min="0" step="0.1" placeholder="unknown" value="${d.fiber_g==null?'':d.fiber_g}"></label>
+        <label>Sugar<input id="pv_sg" type="number" min="0" step="0.1" placeholder="unknown" value="${d.sugar_g==null?'':d.sugar_g}"></label>
+      </div>
+      ${warnings}
       ${noNutrition?`<div class="note">⚠️ Couldn't find nutrition for this — it will be logged as 0 kcal. Edit it after logging to add calories.</div>`:''}
       ${d.source==='ai_estimate'?`<div class="note">🤖 Estimated by the AI for a standard portion — Log it, then tap the card to adjust if it looks off.</div>`:''}
       ${d.confidence_notes?`<div class="note">${esc(d.confidence_notes)}</div>`:''}
       ${d.source?`<div class="note" style="opacity:.55;font-size:11px">source: ${esc(d.source)}${(d.matched_food&&d.source!=='ai_estimate')?` · matched "${esc(d.matched_food)}"`:''}${d.serving_g?` · serving ${d.serving_g}g`:''}${(d.qty&&d.qty!=1)?` · × ${d.qty}`:''}</div>`:''}
       <div class="sheet-actions">
         <button class="btn-cancel" onclick="closeSheet()">Cancel</button>
+        <button class="btn-cancel" onclick="saveCustomFood()">Save custom</button>
         <button class="btn-save" onclick="confirmEntry()">Log it</button></div>`;
   } else if(d.type==='workout'){
     const w=d.weight_kg?`${d.weight_kg}kg`:'bodyweight';
@@ -374,6 +387,7 @@ function showChat(reply){
 function closeSheet(){ document.getElementById('overlay').classList.remove('show'); pending=null; }
 async function confirmEntry(){
   if(!pending) return closeSheet();
+  if(pending.type==='food') syncPendingFood();
   const body=JSON.parse(JSON.stringify(pending));
   if(body.type==='weight' && body._photo){
     body.photo=body._photo;
@@ -381,6 +395,7 @@ async function confirmEntry(){
   }
   const r=await fetch('/api/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d=await r.json();
+  if(!r.ok||!d.ok){ toast(d.error||'Could not log entry'); return; }
   const wasWeight = pending && pending.type==='weight';
   const wasWater = pending && pending.type==='water';
   closeSheet();
@@ -389,6 +404,29 @@ async function confirmEntry(){
     refreshToday();
     successBurst();
   }
+}
+
+function syncPendingFood(){
+  if(!pending||pending.type!=='food') return;
+  const number=id=>{const el=document.getElementById(id);return el&&el.value!==''?Number(el.value):null;};
+  pending.item_name=document.getElementById('pv_name').value.trim()||pending.item_name;
+  pending.calories=number('pv_cal')||0;
+  pending.protein_g=number('pv_p')||0;
+  pending.carbs_g=number('pv_c')||0;
+  pending.fat_g=number('pv_f')||0;
+  pending.fiber_g=number('pv_fb');
+  pending.sugar_g=number('pv_sg');
+}
+
+async function saveCustomFood(){
+  if(!pending||pending.type!=='food') return;
+  syncPendingFood();
+  const name=prompt('Custom food name',pending.item_name); if(!name) return;
+  const serving=Number(prompt('Serving weight in grams','30'));
+  if(!(serving>0)) return toast('Enter a valid serving weight');
+  const body={...pending,name,serving_g:serving};
+  const r=await fetch('/api/custom_food',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json(); toast(d.ok?'Custom food saved ✅':(d.error||'Could not save'));
 }
 
 /* success pulse + spark flash around the ring on a log */

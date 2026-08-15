@@ -194,6 +194,13 @@ def confirm():
         for k in ("item_name", "calories", "protein_g", "carbs_g", "fat_g"):
             if k not in d:
                 return jsonify({"error": f"missing field: {k}"}), 400
+        try:
+            values = [float(d[k]) for k in
+                      ("calories", "protein_g", "carbs_g", "fat_g")]
+        except (TypeError, ValueError):
+            return jsonify({"error": "invalid nutrition values"}), 400
+        if any(v < 0 for v in values) or values[0] > 10000 or any(v > 1000 for v in values[1:]):
+            return jsonify({"error": "nutrition values out of range"}), 400
         storage.save_food(d)
         portions.remember(d)  # learn this user's portion
     elif t == "workout":
@@ -254,11 +261,18 @@ def autocomplete():
         return jsonify({"suggestions": []})
     results = []
     seen = set()
+    # Saved package-label foods take priority.
+    for item in storage.custom_foods():
+        name = item["name"]
+        if q in name.lower():
+            seen.add(name.lower())
+            results.append({"name": name, "calories": item["calories"],
+                            "source": "custom"})
     # 1. Local food DB — prefix + substring match
     from fooddb import FOODS
     for name in FOODS:
-        if q in name.lower() and name not in seen:
-            seen.add(name)
+        if q in name.lower() and name.lower() not in seen:
+            seen.add(name.lower())
             results.append({"name": name.title(), "source": "local"})
     # 2. Recent meals — most frequent first
     recent = storage.recent_meals(20)
@@ -272,6 +286,26 @@ def autocomplete():
                 "source": "recent",
             })
     return jsonify({"suggestions": results[:10]})
+
+
+@app.route("/api/custom_food", methods=["GET", "POST"])
+@login_required
+def custom_food():
+    if request.method == "GET":
+        return jsonify({"foods": storage.custom_foods()})
+    d = request.get_json(force=True) or {}
+    try:
+        serving_g = float(d.get("serving_g", 0))
+        values = [float(d.get(k, 0)) for k in
+                  ("calories", "protein_g", "carbs_g", "fat_g")]
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid custom food values"}), 400
+    if not str(d.get("name", "")).strip() or not (0 < serving_g <= 5000):
+        return jsonify({"error": "name and serving_g are required"}), 400
+    if any(v < 0 for v in values):
+        return jsonify({"error": "nutrition values must be non-negative"}), 400
+    storage.save_custom_food(d)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/relog", methods=["POST"])
