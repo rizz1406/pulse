@@ -6,9 +6,12 @@ A simple passcode gates access so only you can use it.
 
 import base64
 import functools
+import hmac
 import json
+import os
 import re
 import threading
+import time
 import urllib.request
 
 from flask import (
@@ -22,12 +25,19 @@ import parser
 import goals
 import portions
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 config.validate()  # fail fast if the key is missing (never ship a broken deploy)
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 app.secret_key = config.SECRET_KEY
+app.config.update(
+    MAX_CONTENT_LENGTH=25 * 1024 * 1024,
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=bool(os.getenv("RENDER")),
+)
 
 # IMPORTANT: do NOT initialize the database at import time. Under gunicorn the
 # module is imported in the master process, then forked into workers. libsql's
@@ -36,6 +46,10 @@ app.secret_key = config.SECRET_KEY
 _db_ready = False
 _db_init_lock = threading.Lock()
 _SCHEMA_MARKER = "app_schema_v3"
+_login_attempts = {}
+_login_lock = threading.Lock()
+_LOGIN_LIMIT = 5
+_LOGIN_WINDOW_SECONDS = 15 * 60
 
 
 def _schema_is_current():
@@ -50,7 +64,7 @@ def _schema_is_current():
 @app.before_request
 def _ensure_db():
     global _db_ready
-    if request.endpoint in {"index", "static", "me", "login", "logout"}:
+    if request.endpoint in {"index", "static", "me", "login", "logout", "health"}:
         return
     if not _db_ready:
         with _db_init_lock:
@@ -90,11 +104,32 @@ def _days_arg(default=30):
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.get_json(force=True) or {}
-    if not config.APP_PASSCODE or data.get("passcode") == config.APP_PASSCODE:
+    client = request.remote_addr or "unknown"
+    now = time.monotonic()
+    with _login_lock:
+        recent = [t for t in _login_attempts.get(client, [])
+                  if now - t < _LOGIN_WINDOW_SECONDS]
+        _login_attempts[client] = recent
+        if len(recent) >= _LOGIN_LIMIT:
+            return jsonify({"ok": False, "error": "Too many attempts. Try again in 15 minutes."}), 429
+    supplied = str(data.get("passcode") or "")
+    if not config.APP_PASSCODE or hmac.compare_digest(supplied, config.APP_PASSCODE):
+        with _login_lock:
+            _login_attempts.pop(client, None)
         session["authed"] = True
         session.permanent = True
         return jsonify({"ok": True})
+    with _login_lock:
+        _login_attempts.setdefault(client, []).append(now)
     return jsonify({"ok": False, "error": "Wrong passcode"}), 401
+
+
+@app.after_request
+def security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    return response
 
 
 @app.route("/api/logout", methods=["POST"])
@@ -147,8 +182,9 @@ def log():
 
     try:
         result = parser.parse(payload)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Log parsing failed")
+        return jsonify({"error": "Could not analyze this entry. Try again."}), 500
 
     # If skip_clarification and the result has a default_fallback, resolve it now
     if skip_clarify and result.get("default_fallback"):
@@ -158,12 +194,12 @@ def log():
             if resolved and resolved.get("calories", 0) > 0:
                 resolved["needs_clarification"] = False
                 resolved["_raw"] = raw
-                return jsonify(resolved)
+                return jsonify(parser.add_nutrition_accuracy(resolved, raw))
         except Exception:
             pass  # fall through to return the clarification response
 
     result["_raw"] = raw
-    return jsonify(result)
+    return jsonify(parser.add_nutrition_accuracy(result, raw))
 
 
 @app.route("/api/pill", methods=["POST"])
@@ -177,12 +213,13 @@ def pill():
         return jsonify({"error": "missing pill_text"}), 400
     try:
         result = parser.parse_with_pill(pill_text, food_name)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Pill resolution failed")
+        return jsonify({"error": "Could not resolve this option. Try again."}), 500
     if not result or result.get("calories", 0) == 0:
         return jsonify({"error": "Could not find nutrition for this option"}), 404
     result["needs_clarification"] = False
-    return jsonify(result)
+    return jsonify(parser.add_nutrition_accuracy(result, pill_text))
 
 
 @app.route("/api/clarify", methods=["POST"])
@@ -198,13 +235,14 @@ def clarify():
     rnd = int(d.get("round", 1))
     try:
         result = parser.reparse_food_with_answer(original, question, answer, clarify_round=rnd)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Food clarification failed")
+        return jsonify({"error": "Could not refine this estimate. Try again."}), 500
     # carry forward the combined context + round so a 2nd question can chain
     result["_raw"] = original
     result["_context"] = f"{original} | {question} {answer}"
     result["_round"] = rnd + 1
-    return jsonify(result)
+    return jsonify(parser.add_nutrition_accuracy(result, result["_context"]))
 
 
 @app.route("/api/confirm", methods=["POST"])
@@ -530,6 +568,28 @@ def export_data():
                     headers={"Content-Disposition": f"attachment; filename={fname}"})
 
 
+@app.route("/api/backup", methods=["GET", "POST"])
+@login_required
+def backup():
+    """Download or explicitly restore a complete Pulse data snapshot."""
+    if request.method == "GET":
+        from flask import Response
+        payload = json.dumps(storage.backup_data(), ensure_ascii=False)
+        fname = f"pulse-backup-{datetime.now().strftime('%Y-%m-%d')}.json"
+        return Response(payload, mimetype="application/json", headers={
+            "Content-Disposition": f"attachment; filename={fname}",
+            "Cache-Control": "no-store",
+        })
+    body = request.get_json(force=True) or {}
+    if body.get("confirm") != "REPLACE":
+        return jsonify({"error": "restore confirmation required"}), 400
+    try:
+        counts = storage.restore_backup(body.get("backup"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "restored": counts})
+
+
 @app.route("/api/analytics")
 @login_required
 def analytics():
@@ -608,19 +668,39 @@ def barcode_lookup(code):
             return jsonify({"found": False, "error": "Product not found"})
         p = data["product"]
         nutriments = p.get("nutriments", {})
+        use_serving = nutriments.get("energy-kcal_serving") is not None
+        suffix = "serving" if use_serving else "100g"
+        serving_size = p.get("serving_size") if use_serving else "100g"
+        serving_size = serving_size or ("1 serving" if use_serving else "100g")
+        serving_match = re.search(r'(\d+(?:\.\d+)?)\s*g\b', serving_size, re.I)
+        serving_g = float(serving_match.group(1)) if serving_match else (
+            100.0 if not use_serving else 0.0
+        )
+
+        def nutrient(name, digits=1):
+            try:
+                return round(float(nutriments.get(f"{name}_{suffix}") or 0), digits)
+            except (TypeError, ValueError):
+                return 0
+
         return jsonify({
             "found": True,
             "name": p.get("product_name", "Unknown product"),
             "brand": p.get("brands", ""),
-            "serving_size": p.get("serving_size", "1 serving"),
-            "calories": round(nutriments.get("energy-kcal_serving", 0) or nutriments.get("energy-kcal_100g", 0)),
-            "protein": round(nutriments.get("proteins_serving", 0) or nutriments.get("proteins_100g", 0), 1),
-            "carbs": round(nutriments.get("carbohydrates_serving", 0) or nutriments.get("carbohydrates_100g", 0), 1),
-            "fat": round(nutriments.get("fat_serving", 0) or nutriments.get("fat_100g", 0), 1),
-            "fiber": round(nutriments.get("fiber_serving", 0) or nutriments.get("fiber_100g", 0), 1),
+            "serving_size": serving_size,
+            "serving_g": serving_g,
+            "basis": "per serving" if use_serving else "per 100g",
+            "calories": nutrient("energy-kcal", 0),
+            "protein": nutrient("proteins"),
+            "carbs": nutrient("carbohydrates"),
+            "fat": nutrient("fat"),
+            "fiber": nutrient("fiber"),
+            "sugar": nutrient("sugars"),
+            "source": "barcode",
         })
-    except Exception as e:
-        return jsonify({"found": False, "error": str(e)})
+    except Exception:
+        app.logger.exception("Barcode lookup failed")
+        return jsonify({"found": False, "error": "Barcode lookup unavailable. Try again."})
 
 
 # ─────────────────────────────────────────────────────────────
@@ -628,6 +708,7 @@ def barcode_lookup(code):
 # ─────────────────────────────────────────────────────────────
 @app.errorhandler(500)
 def _server_error(e):
+    app.logger.exception("Unhandled server error")
     return jsonify({"error": "Something went wrong server-side. Try again."}), 500
 
 
@@ -644,6 +725,16 @@ def _not_found(e):
 # ─────────────────────────────────────────────────────────────
 # STATIC
 # ─────────────────────────────────────────────────────────────
+@app.route("/healthz")
+def health():
+    try:
+        with db.connect() as c:
+            c.execute("SELECT 1 ok").fetchone()
+        return jsonify({"status": "ok"})
+    except Exception:
+        return jsonify({"status": "unavailable"}), 503
+
+
 @app.route("/")
 def index():
     return send_from_directory("static", "index.html")

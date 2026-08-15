@@ -29,6 +29,8 @@ config.FATSECRET_CLIENT_SECRET = ""
 class TestAPI(unittest.TestCase):
     def setUp(self):
         app_mod.app.config["TESTING"] = True
+        with app_mod._login_lock:
+            app_mod._login_attempts.clear()
         self.client = app_mod.app.test_client()
         storage.init_db()
         import goals
@@ -89,6 +91,18 @@ class TestAPI(unittest.TestCase):
             r = self.client.get("/api/today")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(connect.call_count, 1)
+
+    def test_login_rate_limit_and_security_headers(self):
+        for _ in range(5):
+            self.assertEqual(
+                self.client.post("/api/login", json={"passcode": "wrong"}).status_code,
+                401,
+            )
+        limited = self.client.post("/api/login", json={"passcode": "wrong"})
+        self.assertEqual(limited.status_code, 429)
+        health = self.client.get("/healthz")
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(health.headers["X-Frame-Options"], "DENY")
 
     # ── /api/log ──
     def test_log_text_food(self):
@@ -213,13 +227,17 @@ class TestAPI(unittest.TestCase):
         self.assertIn('id="stepsEditButton"', page)
         self.assertIn('id="stepsEditor"', page)
         self.assertIn('id="gSteps"', page)
+        self.assertIn('id="backupInput"', page)
+        self.assertIn("Scan a meal or nutrition label", page)
         self.assertIn("viewport-fit=cover", page)
         self.assertNotIn("user-scalable=no", page)
         self.assertIn("@media (max-width:380px)", styles)
         self.assertIn("repeat(2,minmax(0,1fr))", styles)
         self.assertIn("max-width:min(520px,100vw)", styles)
-        self.assertIn("pulse-v16", worker)
+        self.assertIn("pulse-v17", worker)
         self.assertIn("stepsState.saved=steps", script)
+        self.assertIn("accuracy-status", script)
+        self.assertIn("async function downloadBackup()", script)
         save_steps = script.split("async function saveSteps(){", 1)[1].split(
             "/* ---------- RECENTS", 1
         )[0]
@@ -417,6 +435,28 @@ class TestAPI(unittest.TestCase):
         r = self.client.post("/api/custom_food", json={"name": "", "serving_g": 0})
         self.assertEqual(r.status_code, 400)
 
+    def test_full_backup_and_explicit_restore(self):
+        self.client.post("/api/confirm", json={
+            "type": "food", "item_name": "Backup meal", "calories": 400,
+            "protein_g": 30, "carbs_g": 40, "fat_g": 12,
+        })
+        backup_response = self.client.get("/api/backup")
+        self.assertEqual(backup_response.status_code, 200)
+        backup = backup_response.get_json()
+        self.assertEqual(backup["format"], "pulse-backup")
+        food_id = self.client.get("/api/today").get_json()["foods"][0]["id"]
+        self.client.post("/api/delete", json={"kind": "food", "id": food_id})
+        denied = self.client.post("/api/backup", json={"backup": backup})
+        self.assertEqual(denied.status_code, 400)
+        restored = self.client.post("/api/backup", json={
+            "confirm": "REPLACE", "backup": backup,
+        })
+        self.assertEqual(restored.status_code, 200)
+        self.assertEqual(
+            self.client.get("/api/today").get_json()["foods"][0]["item_name"],
+            "Backup meal",
+        )
+
     # ── /api/suggest ──
     def test_suggest_returns_remaining_and_suggestions(self):
         with mock.patch.object(parser, "_generate",
@@ -521,6 +561,38 @@ class TestAPI(unittest.TestCase):
             self.assertTrue(d["found"])
             self.assertEqual(d["name"], "Test Chips")
             self.assertEqual(d["calories"], 150)
+            self.assertEqual(d["serving_g"], 30)
+            self.assertEqual(d["basis"], "per serving")
+
+        script = self.client.get("/app.js").get_data(as_text=True)
+        barcode_code = script.split("async function logBarcode(){", 1)[1].split(
+            "/* ---------- PWA", 1
+        )[0]
+        self.assertIn("/api/confirm", barcode_code)
+        self.assertNotIn("/api/log", barcode_code)
+
+    def test_barcode_does_not_mislabel_per_100g_values_as_a_serving(self):
+        import json as _json
+        fake_resp = _json.dumps({
+            "status": 1,
+            "product": {
+                "product_name": "Test Cereal", "serving_size": "30g",
+                "nutriments": {
+                    "energy-kcal_100g": 400, "proteins_100g": 10,
+                    "carbohydrates_100g": 70, "fat_100g": 8,
+                },
+            },
+        }).encode()
+        mock_resp = mock.Mock()
+        mock_resp.read.return_value = fake_resp
+        mock_resp.__enter__ = mock.Mock(return_value=mock_resp)
+        mock_resp.__exit__ = mock.Mock(return_value=False)
+        with mock.patch.object(app_mod.urllib.request, "urlopen", return_value=mock_resp):
+            data = self.client.get("/api/barcode/123456789").get_json()
+        self.assertEqual(data["basis"], "per 100g")
+        self.assertEqual(data["serving_size"], "100g")
+        self.assertEqual(data["serving_g"], 100)
+        self.assertEqual(data["calories"], 400)
 
     # ── weekly analytics endpoint ──
     def test_weekly_analytics_endpoint(self):
@@ -532,20 +604,22 @@ class TestAPI(unittest.TestCase):
         self.assertIn("cal_adherence", d)
         self.assertIn("protein_adherence", d)
 
-    # ── hybrid: AI-estimated macros ──
-    def test_log_ai_estimated_food(self):
-        """Unknown food → AI-estimated macros returned directly for confirmation."""
+    # ── unverified AI nutrition guardrail ──
+    def test_log_rejects_ai_estimated_food(self):
+        """Unknown food → guidance, never loggable invented macros."""
         import parser as parser_mod
         with mock.patch.object(parser_mod, "_generate", return_value={
-            "type": "food", "item_name": "Gulab Jamun (2 pieces)",
-            "quantity": 2, "calories": 290, "protein_g": 4,
-            "carbs_g": 52, "fat_g": 8, "serving_note": "2 small gulab jamuns"}):
-            r = self.client.post("/api/log", json={"text": "gulab jamun"})
+                "type": "food", "item_name": "Unlisted Sweet (2 pieces)",
+                "quantity": 2, "calories": 290, "protein_g": 4,
+                "carbs_g": 52, "fat_g": 8}), \
+             mock.patch.object(parser_mod.fooddb, "parse_food", return_value=None), \
+             mock.patch.object(parser_mod, "_check_ambiguity", return_value={}):
+            r = self.client.post("/api/log", json={"text": "unlisted sweet"})
         self.assertEqual(r.status_code, 200)
         d = r.get_json()
-        self.assertEqual(d["type"], "food")
-        self.assertEqual(d["source"], "ai_estimate")
-        self.assertEqual(d["calories"], 290)
+        self.assertEqual(d["type"], "chat")
+        self.assertIn("verified nutrition", d["reply"])
+        self.assertNotIn("calories", d)
 
     # ── weekly AI recap ──
     def test_recap_returns_none_when_no_data(self):

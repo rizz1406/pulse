@@ -3,7 +3,15 @@ import fooddb
 
 
 class TestFoodDB(unittest.TestCase):
-    """Tests for the local food database — serving-based nutrition logic."""
+    def test_all_local_foods_have_consistent_calorie_macro_totals(self):
+        self.assertGreaterEqual(len(fooddb.FOODS), 100)
+        for name, values in fooddb.FOODS.items():
+            warnings = fooddb._nutrition_warnings(
+                values.get("cal"), values.get("p"), values.get("c"), values.get("f")
+            )
+            self.assertEqual(warnings, [], name)
+
+    # Tests for the local food database — serving-based nutrition logic.
 
     # ── Per-serving items: eggs ──
     def test_one_boiled_egg(self):

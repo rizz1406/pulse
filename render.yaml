@@ -5,6 +5,7 @@ services:
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --workers 1 --threads 4 --worker-class gthread --timeout 120 --graceful-timeout 30
+    healthCheckPath: /healthz
     envVars:
       - key: GROQ_API_KEY
         sync: false

@@ -100,6 +100,8 @@ Two entry types in `FOODS` dict (`fooddb.py:42-160`):
 - `/api/edit` (POST): updates logged entry, re-learns portion if name/calories changed
 - `/api/relog` (POST): one-tap re-log of recent meal
 - `/api/recents`: distinct recent meals (frequency-ordered) for quick-add chips
+- Food previews carry `accuracy_level`, `accuracy_label`, and `accuracy_message` so measured database matches, label values, and estimates are visibly different
+- Meal photos identify food only; nutrition-label photos may transcribe visible per-serving values and are saved as reusable custom foods after confirmation
 
 ## Goals, Water, Steps, Workout, Weight
 - **Goals** (`goals.py`): Mifflin-St Jeor BMR × activity → TDEE + objective delta. Protein = kg × obj_factor (2.0-2.2). Fat = kg × 0.8. Carbs = remainder. Auto-recalculates on new weight log.
@@ -118,6 +120,7 @@ Two entry types in `FOODS` dict (`fooddb.py:42-160`):
 ## Exports
 - `/api/export?kind=food|workout|weight|water` → CSV download with timestamped filename
 - `storage.export_csv()` builds CSV in memory using Python csv module
+- `/api/backup` downloads/restores a versioned JSON snapshot of all user tables; restore requires an explicit `REPLACE` confirmation
 
 ## API Structure
 | Method | Endpoint | Purpose |
@@ -142,6 +145,8 @@ Two entry types in `FOODS` dict (`fooddb.py:42-160`):
 | POST | `/api/water` | Add/undo water |
 | POST | `/api/steps` | Set today's manual step total |
 | GET | `/api/export` | CSV download |
+| GET/POST | `/api/backup` | Full JSON backup / explicit restore |
+| GET | `/healthz` | Database-backed deployment health check |
 
 ## Environment Variable Names Only
 ```
@@ -185,3 +190,4 @@ Coverage areas:
 8. **Portion learning**: Keyed by 3 significant words; can conflate similar dishes
 9. **No background jobs**: All processing synchronous in request
 10. **Chart.js loaded from CDN**: Requires internet for charts to render
+11. **Paid uptime/monitoring**: Render remains on the free plan; always-on hosting and an external health monitor require an account/billing choice

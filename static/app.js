@@ -12,7 +12,7 @@ async function doLogin(){
   const pass=document.getElementById('passInput').value;
   const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passcode:pass})});
   const d=await r.json();
-  if(d.ok){ showApp(); } else { document.getElementById('loginErr').textContent='Wrong passcode'; }
+  if(d.ok){ showApp(); } else { document.getElementById('loginErr').textContent=d.error||'Wrong passcode'; }
 }
 document.getElementById('passInput').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 let _startupExtrasLoaded=false;
@@ -282,6 +282,8 @@ function handleResult(d){
       <div class="macros">
         <span>💪 ${fmtMacro(d.protein_g)}g protein</span><span>🍞 ${fmtMacro(d.carbs_g)}g carbs</span><span>🥑 ${fmtMacro(d.fat_g)}g fat</span>
         <span>🌾 ${fmtOptional(d.fiber_g)} fiber</span><span>🍬 ${fmtOptional(d.sugar_g)} sugar</span></div>
+      ${d.accuracy_label?`<div class="accuracy-status ${esc(d.accuracy_level||'estimate')}">
+        <b>${esc(d.accuracy_label)}</b><span>${esc(d.accuracy_message||'')}</span></div>`:''}
       <div class="food-edit-grid">
         <label class="wide">Food<input id="pv_name" value="${esc(d.item_name)}"></label>
         <label>kcal<input id="pv_cal" type="number" min="0" value="${d.calories}"></label>
@@ -435,6 +437,10 @@ async function confirmEntry(){
   const r=await fetch('/api/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d=await r.json();
   if(!r.ok||!d.ok){ toast(d.error||'Could not log entry'); return; }
+  if(body.type==='food'&&body.source==='nutrition_label'&&body.serving_g>0){
+    fetch('/api/custom_food',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({...body,name:body.item_name})}).catch(()=>{});
+  }
   const wasWeight = pending && pending.type==='weight';
   const wasWater = pending && pending.type==='water';
   closeSheet();
@@ -479,7 +485,7 @@ async function saveCustomFood(){
   if(!pending||pending.type!=='food') return;
   syncPendingFood();
   const name=prompt('Custom food name',pending.item_name); if(!name) return;
-  const serving=Number(prompt('Serving weight in grams','30'));
+  const serving=Number(prompt('Serving weight in grams',String(pending.serving_g||30)));
   if(!(serving>0)) return toast('Enter a valid serving weight');
   const body={...pending,name,serving_g:serving};
   const r=await fetch('/api/custom_food',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -969,6 +975,31 @@ async function exportCSV(kind){
   toast('Exported '+kind+' ✅');
 }
 
+async function downloadBackup(){
+  const r=await fetch('/api/backup');
+  if(!r.ok) return toast('Backup failed');
+  const blob=await r.blob(), a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  const cd=r.headers.get('Content-Disposition')||'';
+  a.download=(cd.match(/filename=([^;]+)/)||[])[1]||'pulse-backup.json';
+  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(a.href);
+  toast('Full backup downloaded');
+}
+async function restoreBackup(input){
+  const file=input.files&&input.files[0]; input.value=''; if(!file) return;
+  let backup;
+  try{backup=JSON.parse(await file.text());}catch(e){return toast('Invalid backup file');}
+  if(backup.format!=='pulse-backup') return toast('Not a Pulse backup');
+  if(!confirm('Replace all Pulse data with this backup? This cannot be undone.')) return;
+  try{
+    const r=await fetch('/api/backup',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({confirm:'REPLACE',backup})});
+    const d=await r.json(); if(!r.ok||!d.ok) return toast(d.error||'Restore failed');
+    Object.keys(localStorage).filter(k=>k.startsWith('pulse-cache:')).forEach(k=>localStorage.removeItem(k));
+    toast('Backup restored'); setTimeout(()=>location.reload(),700);
+  }catch(e){toast('Restore failed — check connection');}
+}
+
 /* ---------- GOAL ---------- */
 let goalTargets=null;
 async function openGoal(){
@@ -1054,7 +1085,7 @@ document.getElementById('goalOverlay').addEventListener('click',e=>{if(e.target.
 checkAuth();
 
 /* ---------- BARCODE SCANNER ---------- */
-let _barcodeScanner=null;
+let _barcodeScanner=null, _barcodeProduct=null;
 function startBarcode(){
   document.getElementById('barcodeOverlay').classList.add('show');
   const res=document.getElementById('barcodeResult');
@@ -1132,20 +1163,32 @@ async function lookupBarcode(code){
     const r=await fetch('/api/barcode/'+code);
     const d=await r.json();
     if(!r.ok||!d.found){res.innerHTML='<div style="color:var(--danger);font-size:13px">'+esc(d.error||('Not found (HTTP '+r.status+')'))+'</div>';return;}
+    _barcodeProduct=d;
     res.innerHTML=`
       <div class="barcode-info">
         <div class="barcode-name">${esc(d.name)}${d.brand?' <span style="color:var(--muted)">('+esc(d.brand)+')</span>':''}</div>
-        <div class="barcode-serving">${esc(d.serving_size)}</div>
+        <div class="barcode-serving">${esc(d.serving_size)} · ${esc(d.basis)}</div>
         <div class="barcode-macros">${d.calories}kcal · ${d.protein}p · ${d.carbs}c · ${d.fat}f</div>
-        <button class="suggest-log" onclick="logBarcode('${jsStr(d.name)}',${d.calories},${d.protein},${d.carbs},${d.fat})">Log this</button>
+        <button class="suggest-log" onclick="logBarcode()">Log exact values</button>
       </div>`;
   }catch(e){res.innerHTML='<div style="color:var(--danger);font-size:13px">Network error — try again</div>';}
 }
-async function logBarcode(name,cal,p,c,f){
+async function logBarcode(){
+  const d=_barcodeProduct; if(!d) return toast('Scan the product again');
+  const name=[d.brand,d.name].filter(Boolean).join(' ');
+  const body={type:'food',item_name:name,calories:d.calories,protein_g:d.protein,
+    carbs_g:d.carbs,fat_g:d.fat,fiber_g:d.fiber,sugar_g:d.sugar,
+    source:'barcode',matched_food:d.name,serving_g:d.serving_g,qty:1,
+    confidence_notes:`barcode package data: ${d.serving_size}`,_raw:`barcode: ${d.name}`};
   try{
-    await fetch('/api/log',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({text:name,skip_clarification:true})});
-    stopBarcode(); refreshToday(); toast('Logged '+name);
+    const r=await fetch('/api/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const saved=await r.json();
+    if(!r.ok||!saved.ok) return toast(saved.error||'Failed to log');
+    if(d.serving_g>0){
+      fetch('/api/custom_food',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({...body,name,serving_g:d.serving_g})}).catch(()=>{});
+    }
+    stopBarcode(); refreshToday(); toast('Logged exact package values');
   }catch(e){toast('Failed to log');}
 }
 

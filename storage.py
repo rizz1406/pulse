@@ -13,6 +13,24 @@ import db
 import goals
 
 
+BACKUP_COLUMNS = {
+    "food": ["id", "ts", "day", "item_name", "calories", "protein_g",
+             "carbs_g", "fat_g", "fiber_g", "sugar_g", "notes", "raw_input"],
+    "workout": ["id", "ts", "day", "exercise_name", "weight_kg", "sets",
+                "reps", "notes", "raw_input"],
+    "weight": ["id", "ts", "day", "weight_kg", "notes", "photo"],
+    "water": ["id", "ts", "day", "ml"],
+    "steps": ["id", "ts", "day", "steps"],
+    "custom_food": ["id", "name", "serving_g", "calories", "protein_g",
+                    "carbs_g", "fat_g", "fiber_g", "sugar_g"],
+    "goal": ["id", "height_cm", "age", "sex", "activity", "objective",
+             "start_weight", "updated", "calorie_adjustment", "last_adapted",
+             "step_target"],
+    "portion_memory": ["key", "item_name", "calories", "protein_g", "carbs_g",
+                       "fat_g", "times_seen", "updated"],
+}
+
+
 def _conn():
     return db.connect()
 
@@ -661,6 +679,59 @@ def export_csv(kind):
     for r in rows:
         w.writerow([r[col] for col in columns[kind]])
     return out.getvalue()
+
+
+def backup_data():
+    """Return a complete, portable JSON-serializable snapshot."""
+    tables = {}
+    with _conn() as c:
+        for table, columns in BACKUP_COLUMNS.items():
+            rows = c.execute(
+                f"SELECT {','.join(columns)} FROM {table}"
+            ).fetchall()
+            tables[table] = [dict(row) for row in rows]
+    return {
+        "format": "pulse-backup",
+        "version": 1,
+        "created_at": _now().isoformat(),
+        "tables": tables,
+    }
+
+
+def restore_backup(payload):
+    """Replace tracked data from a validated Pulse backup."""
+    if not isinstance(payload, dict) or payload.get("format") != "pulse-backup":
+        raise ValueError("not a Pulse backup")
+    if payload.get("version") != 1 or not isinstance(payload.get("tables"), dict):
+        raise ValueError("unsupported backup version")
+    tables = payload["tables"]
+    unknown = set(tables) - set(BACKUP_COLUMNS)
+    if unknown:
+        raise ValueError("backup contains unknown tables")
+    total_rows = sum(len(rows) for rows in tables.values() if isinstance(rows, list))
+    if total_rows > 100000:
+        raise ValueError("backup is too large")
+    counts = {}
+    with _conn() as c:
+        for table in BACKUP_COLUMNS:
+            c.execute(f"DELETE FROM {table}")
+        for table, columns in BACKUP_COLUMNS.items():
+            rows = tables.get(table, [])
+            if not isinstance(rows, list):
+                raise ValueError(f"invalid {table} rows")
+            for row in rows:
+                if not isinstance(row, dict) or set(row) - set(columns):
+                    raise ValueError(f"invalid {table} row")
+                selected = [column for column in columns if column in row]
+                if not selected:
+                    raise ValueError(f"empty {table} row")
+                c.execute(
+                    f"INSERT INTO {table} ({','.join(selected)}) VALUES "
+                    f"({','.join('?' for _ in selected)})",
+                    tuple(row[column] for column in selected),
+                )
+            counts[table] = len(rows)
+    return counts
 
 
 def recent_meals_for_suggest(limit=15):

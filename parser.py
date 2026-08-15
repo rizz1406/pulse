@@ -6,13 +6,12 @@ Understands casual and Hinglish input.
 Tiered food parsing:
   1. Local food database — exact USDA/FSSAI nutrition for ~150 common foods.
      Instant, free, authoritative when it matches.
-  2. Groq AI — classifies input and estimates macros for unknown foods
-     (besan bajji, pani puri, branded items, complex combos). Shown
-     for confirmation before logging.
+  2. Groq AI — classifies input and extracts food/portion structure.
+     It never supplies loggable nutrition values.
   3. Photos go to Gemini vision (Groq has no vision model).
 
-The local DB is the source of truth for known foods. Unknown foods get
-an AI estimate, not a dead-end or wrong DB match.
+The local DB, FatSecret, package labels, and user-entered label values are
+the only nutrition sources. Unknown foods ask for a more verifiable input.
 """
 
 import base64
@@ -55,9 +54,8 @@ def _get_client():
     return _client
 
 # ─────────────────────────────────────────────────────────────
-# Groq prompt — classifies input and gives nutrition ESTIMATES for
-# foods not in the local DB. The local DB is authoritative when it
-# matches. Estimates shown for confirmation before logging.
+# Groq prompt — classifies input and extracts food structure. Nutrition
+# must always be resolved by the database or a package label.
 # ─────────────────────────────────────────────────────────────
 UNIFIED_PROMPT = (
     "You are the engine of a personal health tracker. Read the input (text, a "
@@ -71,22 +69,17 @@ UNIFIED_PROMPT = (
     'Fill ml (millilitres) — assume a glass ≈ 250ml, a bottle ≈ 500ml. '
     'Never classify juice/milk/soda as water.\n'
     '- "chat": anything else.\n\n'
-    "IF food: Identify the food(s) and quantity, then give your best nutrition "
-    "estimate for the EXACT amount described. The system overrides with a "
-    "verified database whenever the food is known and only shows your estimate "
-    "for confirmation otherwise. Fill:\n"
+    "IF food: Identify the food(s) and quantity. Do NOT estimate nutrition; "
+    "the application resolves it from a verified database. Fill:\n"
     "- item_name: short English name of the food(s) (e.g. '2 boiled eggs + 2 chapatis', "
     "'chicken biryani')\n"
     "- quantity: number of servings/items described (default 1)\n"
     "- unit: serving unit you assumed (e.g. 'egg', 'plate', 'bowl', 'cup', 'g')\n"
-    "- calories, protein_g, carbs_g, fat_g: your best estimate for the exact quantity "
-    "described, using standard portions (1 boiled egg ≈ 72 kcal / 6p / 0c / 5f, "
-    "1 fried egg ≈ 91 / 6 / 1 / 7, 1 banana ≈ 89 kcal, 1 chapati ≈ 170 kcal, "
-    "100g chicken breast ≈ 165 kcal / 31p).\n"
+    "- calories, protein_g, carbs_g, fat_g: always 0.\n"
     "- serving_note: one line describing the portion you assumed "
     "(e.g. '2 large eggs, boiled, no oil')\n"
     "- confidence_notes: what portion/prep you identified\n"
-    "- needs_clarification: FALSE for anything you can reasonably estimate. TRUE "
+    "- needs_clarification: FALSE for clearly identified foods. TRUE "
     "ONLY for foods with enormous calorie variance where the user gave no amount "
     "(e.g. bare 'chai', 'biryani', 'curry') — then put ONE short clarify_question "
     "and 2-4 clarify_options.\n"
@@ -157,11 +150,16 @@ class ParseError(Exception):
 
 
 PHOTO_PROMPT = (
-    "This is a photo of food. Identify the dish and estimate the portion shown. "
-    "Return JSON: {\"type\": \"food\", \"item_name\": \"...\", \"quantity\": N, "
-    "\"unit\": \"...\", \"confidence_notes\": \"what you see in the image\"}. "
+    "Inspect this image. If it is a packaged-food nutrition label, transcribe only "
+    "values visibly printed for ONE serving and return JSON with type "
+    "'nutrition_label', item_name, serving_size, serving_g (0 if not printed), "
+    "calories, protein_g, carbs_g, fat_g, fiber_g, and sugar_g. Never infer a "
+    "missing value; use null. Otherwise identify the food and estimate the portion "
+    "shown. Return JSON: {\"type\": \"food\", \"item_name\": \"...\", "
+    "\"quantity\": N, \"unit\": \"...\", \"confidence_notes\": "
+    "\"what you see in the image\"}. "
     "Use the most specific dish name (e.g. 'masala omelette' not just 'omelette'). "
-    "Do NOT provide nutrition values — just identify what the food is."
+    "For meal photos, do NOT provide nutrition values — just identify the food."
 )
 
 
@@ -306,11 +304,6 @@ def _float(v):
         return 0.0
 
 
-def _has_macros(d):
-    """True when the AI provided a usable nutrition estimate."""
-    return any(_int(d.get(k)) > 0 for k in ("calories", "protein_g", "carbs_g", "fat_g"))
-
-
 def _user_text(text):
     """Remove the API prompt label while preserving quantities and items."""
     return re.sub(r'^\s*user\s+input\s*:\s*', '', text, flags=re.I).strip()
@@ -329,6 +322,51 @@ def _strict_accuracy_message(text):
     return ""
 
 
+def add_nutrition_accuracy(result, raw=""):
+    """Attach a user-facing confidence level without changing nutrition data."""
+    if not result or result.get("type") != "food":
+        return result
+    source = str(result.get("source") or "").lower()
+    text = f"{raw} {result.get('item_name', '')}".lower()
+    measured = bool(re.search(
+        r'\b\d+(?:\.\d+)?\s*(?:g|gm|gms|grams?|ml|oz)\b', text
+    ))
+    notes = str(result.get("confidence_notes") or "").lower()
+    if source in {"custom", "nutrition_label"}:
+        level, label = "verified", "Verified label"
+        message = "Values come directly from a saved or scanned package label."
+    elif source == "barcode":
+        level, label = "database", "Package database"
+        message = "Barcode values should be checked against the printed package label once."
+    elif source in {"local", "fatsecret"} and measured and "estimate" not in notes:
+        level, label = "database", "Measured database match"
+        message = "Database nutrition scaled to the stated weight."
+    elif source in {"local", "fatsecret"}:
+        level, label = "estimate", "Portion estimate"
+        message = "Food match is reliable; portion or preparation may vary. Use grams for better accuracy."
+    else:
+        level, label = "estimate", "Needs verification"
+        message = "This is an estimate. Check the portion or package label before logging."
+    result["accuracy_level"] = level
+    result["accuracy_label"] = label
+    result["accuracy_message"] = message
+    result.setdefault("accuracy_warnings", fooddb._nutrition_warnings(
+        result.get("calories"), result.get("protein_g"),
+        result.get("carbs_g"), result.get("fat_g"),
+    ))
+    return result
+
+
+def _unverified_food_message(food_name):
+    """Refuse to turn an AI identification into invented nutrition."""
+    name = food_name or "that food"
+    return {"type": "chat", "reply": (
+        f"I identified {name}, but couldn't find verified nutrition for it. "
+        "Add the brand and grams, scan its barcode or nutrition label, or save "
+        "the package values as a custom food."
+    )}
+
+
 def _norm_keys(d):
     """Normalize AI response keys to lowercase recursively. Groq sometimes
     returns 'TYPE' instead of 'type', 'ITEM_NAME' instead of 'item_name', etc."""
@@ -342,7 +380,8 @@ def _norm_keys(d):
 def _shape_food(d, allow_clarify=True, audit=None, pills=None, default_fallback="",
                 source=None):
     """Shape a food result dict. If audit is provided (local DB match),
-    use it as the source of truth. Otherwise use the AI estimate."""
+    use it as the source of truth. Non-audit values are only used to render
+    clarification choices and are never returned as verified nutrition."""
     if audit:
         return audit
 
@@ -380,8 +419,7 @@ def parse(payload):
 
     Hybrid strategy:
       1. Local DB fast path (zero API cost, exact values) for known food.
-      2. Otherwise AI classifies AND estimates macros — shown to the user
-         for confirmation (no dead-ends, no FatSecret re-mapping).
+      2. Otherwise AI classifies the input, then a verified database is queried.
       Photos go to Gemini vision.
     """
     text_bits = " ".join(p for p in payload if isinstance(p, str))
@@ -409,7 +447,7 @@ def parse(payload):
         if local_food:
             return local_food
 
-    # AI path: classify input, extract structure + estimated macros
+    # AI path: classify input and extract structure only.
     try:
         d = _generate(payload, prompt)
     except ParseError as e:
@@ -425,6 +463,34 @@ def parse(payload):
                 "Add GEMINI_API_KEY to .env / Render, or just type what you ate.")}
         return {"type": "chat", "reply": msg + " Or just type what you ate / did."}
 
+    if kind == "nutrition_label":
+        required = ("calories", "protein_g", "carbs_g", "fat_g")
+        missing = [key for key in required if d.get(key) is None]
+        if missing or not str(d.get("item_name") or "").strip():
+            return {"type": "chat", "reply": (
+                "I couldn't read the full nutrition label clearly. Retake it straight-on "
+                "with the product name, serving size, calories, protein, carbs and fat visible."
+            )}
+        result = {
+            "type": "food",
+            "item_name": str(d.get("item_name")).strip(),
+            "calories": round(_float(d.get("calories"))),
+            "protein_g": round(_float(d.get("protein_g")), 1),
+            "carbs_g": round(_float(d.get("carbs_g")), 1),
+            "fat_g": round(_float(d.get("fat_g")), 1),
+            "fiber_g": (None if d.get("fiber_g") is None
+                        else round(_float(d.get("fiber_g")), 1)),
+            "sugar_g": (None if d.get("sugar_g") is None
+                        else round(_float(d.get("sugar_g")), 1)),
+            "confidence_notes": f"scanned label: {d.get('serving_size') or 'one serving'}",
+            "needs_clarification": False,
+            "source": "nutrition_label",
+            "matched_food": str(d.get("item_name")).strip(),
+            "serving_g": round(_float(d.get("serving_g")), 1),
+            "qty": 1,
+        }
+        return add_nutrition_accuracy(result, "scanned nutrition label")
+
     if kind == "food":
         food_name = str(d.get("item_name") or "").strip()
         # Prefer the user's original text: the AI's normalized item name can
@@ -433,8 +499,6 @@ def parse(payload):
                  if text_bits and not has_image else None)
         if not audit and food_name:
             audit = fooddb.parse_food(food_name)
-        estimated = _has_macros(d)
-
         # Photos: Gemini identifies the food. Use DB nutrition when the name
         # matches; otherwise show pills so the user picks the preparation.
         if has_image:
@@ -445,27 +509,24 @@ def parse(payload):
                 return _shape_food(d, allow_clarify=True, audit=None,
                                    pills=amb["pills"],
                                    default_fallback=food_name)
-            return _shape_food(d, allow_clarify=True, audit=None,
-                               default_fallback=food_name)
+            return _unverified_food_message(food_name)
 
         # Known food → exact DB values (authoritative).
         if audit:
             return _shape_food(d, allow_clarify=True, audit=audit)
 
-        # AI estimated macros → show them directly for confirmation.
-        if estimated:
-            return _shape_food(d, allow_clarify=True, audit=None,
-                               source="ai_estimate")
+        # Preserve useful clarification choices, but never expose AI macros.
+        if d.get("needs_clarification") and d.get("clarify_options"):
+            return _shape_food(d, allow_clarify=True, audit=None)
 
-        # No usable estimate & AI flagged ambiguity → clarification pills.
+        # Unknown/ambiguous food → clarification pills.
         amb = _check_ambiguity(food_name, text_bits)
         if amb.get("requires_clarification") and amb.get("pills"):
             return _shape_food(d, allow_clarify=True, audit=None,
                                pills=amb["pills"],
                                default_fallback=amb.get("default_fallback", ""))
 
-        return _shape_food(d, allow_clarify=True, audit=None,
-                           source="groq_fallback")
+        return _unverified_food_message(food_name)
 
     if kind == "workout":
         return {"type": "workout",
@@ -491,14 +552,18 @@ def parse_food(payload, clarify_round=0):
         prompt = prompt + hint
     if clarify_round >= 2:
         prompt = (prompt + "\n\nThe user has already answered enough questions. "
-                  "Set needs_clarification=false and give your best final estimate now.")
+                  "Set needs_clarification=false, but keep nutrition fields at 0.")
     prompt = prompt + "\n\n(Treat this input as FOOD.)"
     d = _generate(payload, prompt)
     food_name = str(d.get("item_name") or "").strip()
     audit = fooddb.parse_food(food_name) if food_name else None
     if not audit:
         audit = fooddb.parse_food(text_bits)
-    return _shape_food(d, allow_clarify=(clarify_round < 2), audit=audit)
+    if audit:
+        return _shape_food(d, allow_clarify=(clarify_round < 2), audit=audit)
+    if d.get("needs_clarification") and d.get("clarify_options"):
+        return _shape_food(d, allow_clarify=(clarify_round < 2), audit=None)
+    return _unverified_food_message(food_name)
 
 
 def reparse_food_with_answer(original_text, question, answer, clarify_round=1):

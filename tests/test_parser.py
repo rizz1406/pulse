@@ -57,8 +57,8 @@ class TestParser(unittest.TestCase):
         self.assertEqual(d["type"], "chat")
         self.assertIn("dry or cooked oats", d["reply"])
 
-    def test_parse_food_falls_back_to_gemini_for_unknown(self):
-        """Unknown food goes to Gemini for classification."""
+    def test_parse_food_identifies_unknown_without_inventing_macros(self):
+        """Unknown food may be identified but cannot become a food preview."""
         self._fake_generate({
             "type": "food", "item_name": "Quinoa Salad",
             "calories": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0,
@@ -66,10 +66,9 @@ class TestParser(unittest.TestCase):
         })
         with mock.patch.object(parser.fooddb, "parse_food", return_value=None):
             d = parser.parse(["User input: quinoa salad"])
-            self.assertEqual(d["type"], "food")
-            # Gemini returned 0 calories — no DB lookup succeeded
-            self.assertEqual(d["calories"], 0)
-            self.assertEqual(d["source"], "groq_fallback")
+            self.assertEqual(d["type"], "chat")
+            self.assertIn("verified nutrition", d["reply"])
+            self.assertNotIn("calories", d)
 
     def test_parse_food_gemini_with_db_lookup(self):
         """Gemini classifies, then DB provides nutrition."""
@@ -137,6 +136,18 @@ class TestParser(unittest.TestCase):
         self.assertEqual(d["calories"], 450)  # 180 × 2.5 (default serving)
         self.assertFalse(d["needs_clarification"])
 
+    def test_accuracy_labels_distinguish_measured_and_estimated_food(self):
+        measured = parser.add_nutrition_accuracy({
+            "type": "food", "item_name": "50g peanuts", "source": "fatsecret",
+            "calories": 321, "protein_g": 14.3, "carbs_g": 7.1, "fat_g": 26.8,
+        }, "50g roasted peanuts")
+        vague = parser.add_nutrition_accuracy({
+            "type": "food", "item_name": "curd", "source": "local",
+            "calories": 60, "protein_g": 3, "carbs_g": 5, "fat_g": 3,
+        }, "curd")
+        self.assertEqual(measured["accuracy_level"], "database")
+        self.assertEqual(vague["accuracy_level"], "estimate")
+
     def test_parse_food_legacy_clarify_options_kept(self):
         """Unknown food + no estimate → legacy clarify_options still surface."""
         self._fake_generate({
@@ -152,8 +163,8 @@ class TestParser(unittest.TestCase):
         self.assertTrue(d["needs_clarification"])
         self.assertEqual(len(d["clarify_options"]), 3)
 
-    def test_parse_ai_estimate_directly(self):
-        """Unknown food + AI macros → direct preview, no ambiguity re-check."""
+    def test_parse_ai_macros_are_not_loggable(self):
+        """Unknown food must not expose invented AI nutrition."""
         self._fake_generate({
             "type": "food", "item_name": "Chicken Shami Kabab",
             "quantity": 2, "calories": 240, "protein_g": 26,
@@ -161,13 +172,12 @@ class TestParser(unittest.TestCase):
             "serving_note": "2 medium kebabs, pan-tossed",
         })
         with mock.patch.object(parser.fooddb, "parse_food", return_value=None), \
-             mock.patch.object(parser, "_check_ambiguity") as amb:
+             mock.patch.object(parser, "_check_ambiguity", return_value={}) as amb:
             d = parser.parse(["User input: shami kabab"])
-        self.assertEqual(d["type"], "food")
-        self.assertEqual(d["source"], "ai_estimate")
-        self.assertEqual(d["calories"], 240)
-        self.assertFalse(d["needs_clarification"])
-        amb.assert_not_called()
+        self.assertEqual(d["type"], "chat")
+        self.assertIn("couldn't find verified nutrition", d["reply"])
+        self.assertNotIn("calories", d)
+        amb.assert_called_once()
 
     def test_parse_workout(self):
         self._fake_generate({"type": "workout", "exercise_name": "Bench Press",
@@ -211,14 +221,15 @@ class TestParser(unittest.TestCase):
         self.assertFalse(d["needs_clarification"])
         self.assertIn("Rich", seen["payload"][0])
 
-    def test_no_second_question_after_round_two(self):
+    def test_no_unverified_food_after_round_two(self):
         self._fake_generate({
             "type": "food", "item_name": "X", "calories": 0,
             "protein_g": 0, "carbs_g": 0, "fat_g": 0,
             "needs_clarification": True,
         })
         d = parser.parse_food(["User input: x"], clarify_round=2)
-        self.assertFalse(d["needs_clarification"])
+        self.assertEqual(d["type"], "chat")
+        self.assertIn("verified nutrition", d["reply"])
 
     def test_audit_fields_present_on_food_result(self):
         """All food results have audit trail fields."""
@@ -598,6 +609,22 @@ class TestVisionModel(unittest.TestCase):
         self.assertEqual(result["type"], "food")
         self.assertTrue(result.get("needs_clarification"))
         self.assertEqual(len(result["pills"]), 2)
+
+    def test_nutrition_label_photo_uses_only_transcribed_values(self):
+        image_payload = [
+            {"mime_type": "image/jpeg", "data": b"label image"},
+        ]
+        with mock.patch.object(parser, "_generate", return_value={
+            "type": "nutrition_label", "item_name": "Protein Yogurt",
+            "serving_size": "150g", "serving_g": 150,
+            "calories": 120, "protein_g": 15, "carbs_g": 8,
+            "fat_g": 3, "fiber_g": None, "sugar_g": 6,
+        }):
+            result = parser.parse(image_payload)
+        self.assertEqual(result["source"], "nutrition_label")
+        self.assertEqual(result["accuracy_level"], "verified")
+        self.assertEqual(result["protein_g"], 15)
+        self.assertIsNone(result["fiber_g"])
 
     def test_photo_flow_uses_local_db_when_identified(self):
         """Photo: Gemini identifies a known food → local DB nutrition, no pills."""

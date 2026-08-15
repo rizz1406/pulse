@@ -185,6 +185,10 @@
         <button onclick="exportCSV('weight')">⚖ Weight</button>
         <button onclick="exportCSV('water')">💧 Water</button>
       </div>
+      <div class="backup-row">
+        <button onclick="downloadBackup()">Download full backup</button>
+        <button onclick="document.getElementById('backupInput').click()">Restore backup</button>
+      </div>
     </div>
   </div>
 </div>
@@ -192,7 +196,7 @@
 <!-- INPUT DOCK -->
 <div class="dock" id="dock" style="display:none">
   <div class="dock-inner">
-    <button class="icon-btn" id="camBtn" onclick="document.getElementById('camInput').click()">📷</button>
+    <button class="icon-btn" id="camBtn" title="Scan a meal or nutrition label" aria-label="Scan a meal or nutrition label" onclick="document.getElementById('camInput').click()">📷</button>
     <button class="icon-btn" id="barcodeBtn" onclick="startBarcode()">⊞</button>
     <div class="input-box">
       <textarea id="msg" rows="1" placeholder="What did you eat or lift?"></textarea>
@@ -205,6 +209,7 @@
 <input id="camInput" type="file" accept="image/*" capture="environment" style="display:none" onchange="onPhoto(this)">
 <input id="galInput" type="file" accept="image/*" style="display:none" onchange="onPhoto(this)">
 <input id="progPhotoInput" type="file" accept="image/*" style="display:none" onchange="onProgPhoto(this)">
+<input id="backupInput" type="file" accept="application/json,.json" style="display:none" onchange="restoreBackup(this)">
 
 <!-- PREVIEW SHEET -->
 <div class="overlay" id="overlay">
