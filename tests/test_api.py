@@ -218,12 +218,29 @@ class TestAPI(unittest.TestCase):
         self.assertIn("@media (max-width:380px)", styles)
         self.assertIn("repeat(2,minmax(0,1fr))", styles)
         self.assertIn("max-width:min(520px,100vw)", styles)
-        self.assertIn("pulse-v15", worker)
+        self.assertIn("pulse-v16", worker)
         self.assertIn("stepsState.saved=steps", script)
         save_steps = script.split("async function saveSteps(){", 1)[1].split(
             "/* ---------- RECENTS", 1
         )[0]
         self.assertNotIn("refreshToday()", save_steps)
+
+    def test_pwa_uses_versioned_pulse_icons(self):
+        page = self.client.get("/").get_data(as_text=True)
+        manifest = self.client.get("/manifest.json").get_json()
+        worker = self.client.get("/sw.js").get_data(as_text=True)
+        self.assertIn("/icon-192-v2.png", page)
+        self.assertEqual(
+            [icon["src"] for icon in manifest["icons"]],
+            ["/icon-192-v2.png", "/icon-512-v2.png"],
+        )
+        for size in (192, 512):
+            path = f"/icon-{size}-v2.png"
+            raw = self.client.get(path).data
+            self.assertEqual(raw[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertEqual(int.from_bytes(raw[16:20], "big"), size)
+            self.assertEqual(int.from_bytes(raw[20:24], "big"), size)
+            self.assertIn(path, worker)
 
     def test_relog_unknown_404(self):
         r = self.client.post("/api/relog", json={"item_name": "never logged"})

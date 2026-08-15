@@ -1,11 +1,11 @@
-const CACHE = 'pulse-v15';
+const CACHE = 'pulse-v16';
 const ASSETS = [
   '/',
   '/style.css',
   '/app.js',
   '/manifest.json',
-  '/icon-192.png',
-  '/icon-512.png',
+  '/icon-192-v2.png',
+  '/icon-512-v2.png',
 ];
 
 self.addEventListener('install', e => {
