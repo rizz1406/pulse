@@ -251,6 +251,12 @@ class TestFoodDB(unittest.TestCase):
         self.assertIsNotNone(d)
         self.assertEqual(d["calories"], 232)  # 116 * 2
 
+    def test_small_portion_keeps_decimal_macros(self):
+        d = fooddb.parse_local("50g banana")
+        self.assertEqual(d["calories"], 44)
+        self.assertEqual(d["protein_g"], 0.5)
+        self.assertEqual(d["carbs_g"], 11.5)
+
     def test_explicit_ml_juice(self):
         """'250ml juice' = 113 kcal."""
         d = fooddb.parse_local("250ml juice")
@@ -490,6 +496,52 @@ class TestFatSecret(unittest.TestCase):
         # normalized per-100 = 40 kcal; 330ml → ×3.3 → 132
         self.assertEqual(d["calories"], 132)
 
+    def test_fatsecret_piece_serving_uses_metric_weight_for_grams(self):
+        """50g nuts uses FatSecret's real gram weight for its piece serving."""
+        from unittest import mock
+        results = [{"food_id": "123", "food_name": "Mixed Nuts",
+                    "food_description":
+                    "Per 39 pieces - Calories: 150kcal | Fat: 11g | Carbs: 11g | Protein: 3g"}]
+        detail = {"servings": {"serving": [{
+            "serving_description": "39 pieces", "number_of_units": "39",
+            "measurement_description": "pieces", "is_default": "1",
+            "metric_serving_amount": "28.35", "metric_serving_unit": "g",
+            "calories": "150", "fat": "11", "carbohydrate": "11",
+            "protein": "3",
+        }]}}
+        with mock.patch.object(fooddb, "config") as cfg, \
+                mock.patch.object(fooddb, "_fs_search", return_value=results), \
+                mock.patch.object(fooddb, "_fs_get_food", return_value=detail):
+            cfg.FATSECRET_CLIENT_ID = "test"
+            d = fooddb.parse_fatsecret("50g mixed nuts")
+        self.assertEqual(d["calories"], 265)
+        self.assertEqual(d["serving_g"], 100)
+        self.assertAlmostEqual(d["qty"], 0.5)
+
+    def test_fatsecret_refuses_unsafe_piece_to_gram_conversion(self):
+        """Never treat a count-only FatSecret serving as if it were 100g."""
+        from unittest import mock
+        results = [{"food_id": "123", "food_name": "Mixed Nuts",
+                    "food_description":
+                    "Per 39 pieces - Calories: 150kcal | Fat: 11g | Carbs: 11g | Protein: 3g"}]
+        with mock.patch.object(fooddb, "config") as cfg, \
+                mock.patch.object(fooddb, "_fs_search", return_value=results), \
+                mock.patch.object(fooddb, "_fs_get_food", return_value=None):
+            cfg.FATSECRET_CLIENT_ID = "test"
+            self.assertIsNone(fooddb.parse_fatsecret("50g mixed nuts"))
+
+    def test_mixed_local_and_fatsecret_items_keep_all_quantities(self):
+        """50g nuts plus a banana sums both independently parsed items."""
+        from unittest import mock
+        nuts = fooddb._build_result(
+            "Mixed Nuts", 265, 5, 19, 19, "fatsecret", "Mixed Nuts",
+            100, 0.5, "FatSecret metric serving")
+        with mock.patch.object(fooddb, "parse_fatsecret", return_value=nuts) as fs:
+            d = fooddb.parse_food("50g mixed nuts and 1 banana")
+        self.assertEqual(d["calories"], 372)  # 265 nuts + 107 banana
+        self.assertIn("Banana", d["item_name"])
+        fs.assert_called_once_with("50g mixed nuts")
+
     def test_parse_fatsecret_one_boiled_egg_not_pie(self):
         """Regression: 'one boiled egg' must search 'boiled egg', never match
         'Cherry Pie (One Crust)' (FatSecret ranks 'One Crust' pies when 'one'
@@ -539,6 +591,14 @@ class TestFatSecret(unittest.TestCase):
         qty, unit_key, cleaned, gram_mode, ml_mode, raw_unit = fooddb._extract_qty("200g chicken")
         self.assertTrue(gram_mode)
         self.assertAlmostEqual(qty, 2.0)
+
+    def test_extract_qty_gram_spelling_variants(self):
+        for text in ("50gm nuts", "50gms nuts", "50 gram nuts", "50 grams nuts"):
+            with self.subTest(text=text):
+                qty, _key, cleaned, gram_mode, _ml_mode, _unit = fooddb._extract_qty(text)
+                self.assertTrue(gram_mode)
+                self.assertEqual(qty, 0.5)
+                self.assertEqual(cleaned, "nuts")
 
 
 if __name__ == "__main__":

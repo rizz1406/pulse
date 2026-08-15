@@ -17,6 +17,7 @@ an AI estimate, not a dead-end or wrong DB match.
 
 import base64
 import json
+import re
 import openai
 from openai import OpenAI
 import config
@@ -309,6 +310,11 @@ def _has_macros(d):
     return any(_int(d.get(k)) > 0 for k in ("calories", "protein_g", "carbs_g", "fat_g"))
 
 
+def _user_text(text):
+    """Remove the API prompt label while preserving quantities and items."""
+    return re.sub(r'^\s*user\s+input\s*:\s*', '', text, flags=re.I).strip()
+
+
 def _norm_keys(d):
     """Normalize AI response keys to lowercase recursively. Groq sometimes
     returns 'TYPE' instead of 'type', 'ITEM_NAME' instead of 'item_name', etc."""
@@ -375,6 +381,10 @@ def parse(payload):
     # Fast path: try local food DB for plain text (no API call needed).
     text_only = all(isinstance(p, str) for p in payload)
     if text_only and text_bits.strip():
+        if re.search(r'\b\d+(?:\.\d+)?\s*mgs?\b', text_bits, re.I):
+            return {"type": "chat", "reply": (
+                "Did you mean grams? Use 'g' (for example, '50g nuts'). "
+                "'mg' means milligrams and is 1,000 times smaller.")}
         local_food = fooddb.parse_local(text_bits)
         if local_food:
             return local_food
@@ -397,7 +407,12 @@ def parse(payload):
 
     if kind == "food":
         food_name = str(d.get("item_name") or "").strip()
-        audit = fooddb.parse_food(food_name) if food_name else None
+        # Prefer the user's original text: the AI's normalized item name can
+        # omit gram amounts or secondary foods (for example, a banana).
+        audit = (fooddb.parse_food(_user_text(text_bits))
+                 if text_bits and not has_image else None)
+        if not audit and food_name:
+            audit = fooddb.parse_food(food_name)
         estimated = _has_macros(d)
 
         # Photos: Gemini identifies the food. Use DB nutrition when the name

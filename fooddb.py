@@ -213,7 +213,7 @@ _HALF_RE = re.compile(
 _QUARTER_RE = re.compile(
     r'\b(quarter|0\.25)\s*(' + _UNIT_ALT + r')\b', re.I
 )
-_GRAM_RE = re.compile(r'(\d+(?:\.\d+)?)\s*g\b', re.I)
+_GRAM_RE = re.compile(r'(\d+(?:\.\d+)?)\s*(?:g|gm|gms|gram|grams)\b', re.I)
 _ML_RE = re.compile(r'(\d+(?:\.\d+)?)\s*ml\b', re.I)
 # Generic leading count: "2 biryani", "2 big macs" — a bare number before a
 # food word means that many servings/countable items. Only used when no
@@ -349,9 +349,9 @@ def _calc_nutrition(base_cal, base_p, base_c, base_f, serving_g, qty, gram_mode=
 
     return (
         round(base_cal * mult),
-        round(base_p * mult),
-        round(base_c * mult),
-        round(base_f * mult),
+        round(base_p * mult, 1),
+        round(base_c * mult, 1),
+        round(base_f * mult, 1),
     )
 
 
@@ -359,9 +359,9 @@ def _calc_serving_nutrition(cal, p, c, f, qty):
     """Scale per-serving nutrition by quantity. Values are for ONE serving."""
     return (
         round(cal * qty),
-        round(p * qty),
-        round(c * qty),
-        round(f * qty),
+        round(p * qty, 1),
+        round(c * qty, 1),
+        round(f * qty, 1),
     )
 
 
@@ -723,6 +723,26 @@ def _fs_search(query, limit=5):
         return []
 
 
+def _fs_get_food(food_id):
+    """Fetch all serving sizes for a FatSecret food result."""
+    token = _fs_get_token()
+    if not token or not food_id:
+        return None
+
+    params = urllib.parse.urlencode({
+        "method": "food.get.v2",
+        "food_id": food_id,
+        "format": "json",
+    })
+    url = f"https://platform.fatsecret.com/rest/server.api?{params}"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read()).get("food")
+    except Exception:
+        return None
+
+
 def _fs_parse_serving_description(description):
     """Parse FatSecret food_description into per-100g nutrition + serving info.
 
@@ -737,7 +757,7 @@ def _fs_parse_serving_description(description):
         return None
 
     # Parse the "Per X" part to determine the reference amount
-    per_match = re.search(r'Per\s+(\d+(?:\.\d+)?)\s*(g|ml|cups?|piece|slice|serving)?',
+    per_match = re.search(r'Per\s+(\d+(?:\.\d+)?)\s*(g|ml|cups?|pieces?|slices?|servings?)?',
                           description, re.I)
     ref_amount = 100.0
     ref_unit = "g"
@@ -813,6 +833,75 @@ def _fs_parse_serving_description(description):
         # nominal 100g / 100ml equivalent.
         "real_serving_g": ref_amount if (ref_unit == "g" and scaled
                                          and orig_unit == "g") else None,
+    }
+
+
+def _fs_parse_metric_serving(food, summary=None):
+    """Build normalized nutrition from a detailed FatSecret metric serving.
+
+    Prefer the serving represented by the search summary (for example,
+    39 pieces), then FatSecret's default, then any serving with a real g/ml
+    amount. No piece-to-gram estimate is made locally.
+    """
+    if not food:
+        return None
+    servings = food.get("servings", {}).get("serving", [])
+    if isinstance(servings, dict):
+        servings = [servings]
+
+    metric = []
+    for serving in servings:
+        try:
+            amount = float(serving.get("metric_serving_amount", 0))
+        except (TypeError, ValueError):
+            continue
+        unit = str(serving.get("metric_serving_unit", "")).lower()
+        if amount > 0 and unit in ("g", "ml"):
+            metric.append((serving, amount, unit))
+    if not metric:
+        return None
+
+    def rank(entry):
+        serving, _amount, _unit = entry
+        match = 0
+        if summary:
+            desc = str(serving.get("serving_description", "")).lower()
+            measurement = str(serving.get("measurement_description", "")).lower()
+            try:
+                units = float(serving.get("number_of_units", 0))
+            except (TypeError, ValueError):
+                units = 0
+            orig_unit = str(summary.get("orig_unit", "")).rstrip("s")
+            if orig_unit and (orig_unit in desc or orig_unit in measurement):
+                match += 1
+            if units and abs(units - float(summary.get("orig_amount", 0))) < 0.01:
+                match += 2
+        return (match, 1 if str(serving.get("is_default", "")) == "1" else 0)
+
+    serving, amount, unit = max(metric, key=rank)
+    try:
+        cal = float(serving.get("calories", 0))
+        p = float(serving.get("protein", 0))
+        c = float(serving.get("carbohydrate", 0))
+        f = float(serving.get("fat", 0))
+    except (TypeError, ValueError):
+        return None
+    if not any((cal, p, c, f)):
+        return None
+
+    scale = 100.0 / amount
+    return {
+        # Keep precision until the user's requested amount is calculated.
+        "cal_per100g": cal * scale,
+        "p_per100g": p * scale,
+        "c_per100g": c * scale,
+        "f_per100g": f * scale,
+        "ref_amount": amount,
+        "ref_unit": unit,
+        "orig_unit": str(serving.get("measurement_description", "serving")).lower(),
+        "orig_amount": float(serving.get("number_of_units", 1) or 1),
+        "per_serving": {"cal": cal, "p": p, "c": c, "f": f},
+        "real_serving_g": amount if unit == "g" else None,
     }
 
 
@@ -920,6 +1009,17 @@ def parse_fatsecret(text):
 
     score, unit_match, parsed, name, raw_item = best
 
+    # Search summaries often say only "Per 39 pieces". Fetch the detailed
+    # serving so FatSecret supplies the real metric weight behind that count.
+    # Without it, an explicit gram request cannot be converted safely.
+    if parsed["orig_unit"] not in ("g", "ml"):
+        detailed = _fs_get_food(raw_item.get("food_id"))
+        metric = _fs_parse_metric_serving(detailed, parsed)
+        if metric:
+            parsed = metric
+        elif gram_mode:
+            return None
+
     # Serving selection — data-driven, from the FatSecret description:
     #   * user gave explicit grams/ml → scale per-100g by that amount
     #   * user's unit matches the description unit ("1 cup" + "Per 1 cup")
@@ -940,17 +1040,25 @@ def parse_fatsecret(text):
         multiplier = qty / parsed["orig_amount"] if parsed["orig_amount"] else qty
         serving_g = parsed["ref_amount"] if parsed["orig_unit"] == "cup" else 100
         cal = round(per["cal"] * multiplier)
-        p = round(per["p"] * multiplier)
-        c = round(per["c"] * multiplier)
-        f = round(per["f"] * multiplier)
+        p = round(per["p"] * multiplier, 1)
+        c = round(per["c"] * multiplier, 1)
+        f = round(per["f"] * multiplier, 1)
     elif parsed["real_serving_g"]:
         serving_g = parsed["real_serving_g"]
         cal, p, c, f = _calc_nutrition(
             parsed["cal_per100g"], parsed["p_per100g"],
             parsed["c_per100g"], parsed["f_per100g"],
             serving_g, qty, gram_mode)
+    elif parsed["orig_unit"] not in ("g", "ml"):
+        # A count-based serving with no metric weight is still valid as the
+        # listed serving, but it must never be labelled or scaled as 100g.
+        serving_g = 0
+        cal = round(per["cal"] * qty)
+        p = round(per["p"] * qty, 1)
+        c = round(per["c"] * qty, 1)
+        f = round(per["f"] * qty, 1)
     else:
-        serving_g = 100  # nominal per-100g/100ml serving
+        serving_g = 100
         cal, p, c, f = _calc_nutrition(
             parsed["cal_per100g"], parsed["p_per100g"],
             parsed["c_per100g"], parsed["f_per100g"],
@@ -975,6 +1083,38 @@ def parse_fatsecret(text):
 # MAIN ENTRY POINT — three-tier lookup
 # ─────────────────────────────────────────────────────────────
 
+def _parse_tiered_multi(text):
+    """Parse mixed local/FatSecret items without dropping any component."""
+    clean_text = re.sub(r'^\s*user\s+input\s*:\s*', '', text, flags=re.I)
+    parts = [p.strip() for p in re.split(r'[,;+]|\band\b|\bwith\b', clean_text)
+             if p.strip()]
+    if len(parts) <= 1:
+        return None
+
+    items = []
+    for part in parts:
+        item = parse_local(part)
+        if not item or item["calories"] <= 0:
+            item = parse_fatsecret(part)
+        if not item or item["calories"] <= 0:
+            return None
+        items.append(item)
+
+    return _build_result(
+        item_name=" + ".join(item["item_name"] for item in items),
+        cal=sum(item["calories"] for item in items),
+        p=sum(item["protein_g"] for item in items),
+        c=sum(item["carbs_g"] for item in items),
+        f=sum(item["fat_g"] for item in items),
+        source="local" if all(item["source"] == "local" for item in items)
+        else "fatsecret",
+        matched_food="+".join(item["matched_food"] for item in items),
+        serving_g=0,
+        qty=1,
+        notes="; ".join(item["confidence_notes"] for item in items),
+    )
+
+
 def parse_food(text, payload=None):
     """Three-tier food parsing:
     1. Local DB (unlimited, instant)
@@ -994,6 +1134,10 @@ def parse_food(text, payload=None):
     local = parse_local(text)
     if local and local["calories"] > 0:
         return local
+
+    multi = _parse_tiered_multi(text)
+    if multi:
+        return multi
 
     # Tier 2: FatSecret
     fs = parse_fatsecret(text)

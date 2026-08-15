@@ -5,6 +5,7 @@ Values read from the environment always win over .env.
 """
 
 import os
+import secrets
 
 # Load .env if it exists (keeps the Groq key out of your shell history).
 # python-dotenv is optional — if missing, we just rely on real env vars.
@@ -28,7 +29,9 @@ GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL") or os.getenv("GEMINI_MODE
 APP_PASSCODE = os.getenv("APP_PASSCODE", "")
 
 # Secret for signing the login session cookie. Set a long random string in .env when hosting.
-SECRET_KEY = os.getenv("SECRET_KEY", "x7k2mq9vBn4pLw8sReT3yUicjHf6aZdQ0oM5")
+# Generate an ephemeral local key when none is configured. Hosted deployments
+# should always set SECRET_KEY so sessions survive process restarts.
+SECRET_KEY = os.getenv("SECRET_KEY") or secrets.token_urlsafe(32)
 
 # ── Local settings ───────────────────────────────────────────
 LOCAL_TZ = ZoneInfo(os.getenv("LOCAL_TZ", "Asia/Kolkata"))
@@ -59,10 +62,10 @@ _PLACEHOLDERS = {"", "PASTE_YOUR_GROQ_KEY", "your-key", "none"}
 
 def validate():
     """Fail fast at startup if the app can't actually work."""
-    if GROQ_API_KEY.strip().lower() in _PLACEHOLDERS:
+    if GROQ_API_KEY and GROQ_API_KEY.strip().lower() in _PLACEHOLDERS:
         raise RuntimeError(
-            "GROQ_API_KEY is not set. Put your key in .env "
-            "(e.g. GROQ_API_KEY=your-key) and restart."
+            "GROQ_API_KEY contains a placeholder. Set a real key or remove "
+            "the variable to use local food matching only."
         )
     if not SECRET_KEY:
         raise RuntimeError("SECRET_KEY must not be empty.")

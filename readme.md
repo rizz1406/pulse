@@ -70,9 +70,8 @@ pulse/
 
 ```bash
 pip install -r requirements.txt
-export GROQ_API_KEY="your-groq-key"
-export GEMINI_API_KEY="your-gemini-key"   # only for photo recognition
-export APP_PASSCODE="your-passcode"
+cp .env.example .env
+# Edit .env with your keys and passcode, then:
 python app.py
 ```
 Open **http://localhost:5000**, enter your passcode, and log your first meal.
@@ -90,6 +89,7 @@ Open **http://localhost:5000**, enter your passcode, and log your first meal.
    - `GROQ_API_KEY` — text parsing AI
    - `GEMINI_API_KEY` — photo recognition (free at aistudio.google.com/apikey)
    - `APP_PASSCODE` — your login passcode
+   - `SECRET_KEY` — a long random value used to sign login sessions
    - `TURSO_DATABASE_URL` — your Turso database URL (for persistent data)
    - `TURSO_AUTH_TOKEN` — your Turso auth token
    - `FATSECRET_CLIENT_ID` / `FATSECRET_CLIENT_SECRET` — optional, for FatSecret backup

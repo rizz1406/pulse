@@ -42,6 +42,11 @@ class TestParser(unittest.TestCase):
         self.assertEqual(d["calories"], 144)
         self.assertEqual(d["protein_g"], 12)
 
+    def test_milligrams_are_not_silently_treated_as_grams(self):
+        d = parser.parse(["User input: 50mgs nuts and 1 banana"])
+        self.assertEqual(d["type"], "chat")
+        self.assertIn("1,000 times smaller", d["reply"])
+
     def test_parse_food_falls_back_to_gemini_for_unknown(self):
         """Unknown food goes to Gemini for classification."""
         self._fake_generate({
@@ -68,6 +73,23 @@ class TestParser(unittest.TestCase):
         self.assertEqual(d["type"], "food")
         self.assertEqual(d["calories"], 144)
         self.assertEqual(d["source"], "local")
+
+    def test_parse_prefers_original_quantities_over_ai_item_name(self):
+        """AI normalization must not drop grams or secondary foods."""
+        self._fake_generate({
+            "type": "food", "item_name": "Mixed Nuts",
+            "calories": 150, "protein_g": 3, "carbs_g": 11, "fat_g": 11,
+        })
+        expected = {"type": "food", "item_name": "50g Mixed Nuts + Banana",
+                    "calories": 372, "protein_g": 6, "carbs_g": 47,
+                    "fat_g": 19, "source": "fatsecret"}
+        with mock.patch.object(parser.fooddb, "parse_local", return_value=None), \
+                mock.patch.object(parser.fooddb, "parse_food",
+                                  side_effect=[expected, None]) as lookup:
+            d = parser.parse(["User input: 50g mixed nuts and 1 banana"])
+        self.assertEqual(d["calories"], 372)
+        self.assertIn("Banana", d["item_name"])
+        lookup.assert_called_once_with("50g mixed nuts and 1 banana")
 
     def test_shape_food_returns_audit_when_provided(self):
         """_shape_food uses audit dict when provided (DB result)."""
