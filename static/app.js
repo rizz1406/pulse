@@ -22,6 +22,8 @@ async function showApp(){
   try{
     const cached=JSON.parse(localStorage.getItem('pulse-cache:/api/today'));
     if(cached&&cached.totals) renderToday(cached);
+    const weekly=JSON.parse(localStorage.getItem('pulse-cache:/api/analytics/weekly'));
+    if(weekly) renderWeeklyStreak(weekly);
   }catch(e){}
   await refreshToday();
   if(!_startupExtrasLoaded){
@@ -641,15 +643,17 @@ function renderToday(d){
 }
 
 /* ---------- WEEKLY STREAK ---------- */
-async function loadWeeklyStreak(){
-  const d=await getJSON('/api/analytics/weekly');
-  if(!d) return;
+function renderWeeklyStreak(d){
   document.getElementById('wkStreakCount').textContent=d.streak;
   document.getElementById('wkCalPct').textContent=d.cal_adherence+'%';
   document.getElementById('wkProtPct').textContent=d.protein_adherence+'%';
   document.getElementById('wkCalFill').style.width=Math.min(d.cal_adherence,100)+'%';
   document.getElementById('wkProtFill').style.width=Math.min(d.protein_adherence,100)+'%';
   document.getElementById('wkSub').textContent=d.days_logged+' of '+d.days_total+' days logged';
+}
+async function loadWeeklyStreak(){
+  const d=await getJSON('/api/analytics/weekly');
+  if(d) renderWeeklyStreak(d);
 }
 
 /* ---------- WEEKLY AI RECAP ---------- */
