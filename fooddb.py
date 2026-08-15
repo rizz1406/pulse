@@ -993,7 +993,7 @@ def parse_fatsecret(text):
         return None
 
     # Extract qty from the original text
-    qty, unit_key, cleaned, gram_mode, _ml_mode, raw_unit = _extract_qty(text.lower())
+    qty, unit_key, cleaned, gram_mode, ml_mode, raw_unit = _extract_qty(text.lower())
 
     # Build search query from significant words
     search_words = _words(cleaned) if cleaned else words
@@ -1068,14 +1068,24 @@ def parse_fatsecret(text):
     desc = raw_item.get("food_description", "")
     per_info = f" ({desc})" if desc else ""
 
+    if gram_mode:
+        amount = qty * 100
+        unit = "ml" if ml_mode else "g"
+        item_name = f"{amount:g}{unit} {name.title()}"
+        portion_note = (f"requested {amount:g}{unit}; FatSecret metric reference "
+                        f"{parsed['ref_amount']:g}{parsed['ref_unit']}")
+    else:
+        item_name = name.title()
+        portion_note = f"qty={qty}x"
+
     return _build_result(
-        item_name=name.title(),
+        item_name=item_name,
         cal=cal, p=p, c=c, f=f,
         source="fatsecret",
         matched_food=name,
         serving_g=serving_g,
         qty=qty,
-        notes=f"FatSecret: {name}{per_info} [score={score}, qty={qty}x]",
+        notes=f"FatSecret: {name}{per_info} [score={score}, {portion_note}]",
     )
 
 
@@ -1103,9 +1113,9 @@ def _parse_tiered_multi(text):
     return _build_result(
         item_name=" + ".join(item["item_name"] for item in items),
         cal=sum(item["calories"] for item in items),
-        p=sum(item["protein_g"] for item in items),
-        c=sum(item["carbs_g"] for item in items),
-        f=sum(item["fat_g"] for item in items),
+        p=round(sum(item["protein_g"] for item in items), 1),
+        c=round(sum(item["carbs_g"] for item in items), 1),
+        f=round(sum(item["fat_g"] for item in items), 1),
         source="local" if all(item["source"] == "local" for item in items)
         else "fatsecret",
         matched_food="+".join(item["matched_food"] for item in items),

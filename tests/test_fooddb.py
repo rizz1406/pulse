@@ -515,6 +515,7 @@ class TestFatSecret(unittest.TestCase):
             cfg.FATSECRET_CLIENT_ID = "test"
             d = fooddb.parse_fatsecret("50g mixed nuts")
         self.assertEqual(d["calories"], 265)
+        self.assertEqual(d["item_name"], "50g Mixed Nuts")
         self.assertEqual(d["serving_g"], 100)
         self.assertAlmostEqual(d["qty"], 0.5)
 
@@ -540,6 +541,7 @@ class TestFatSecret(unittest.TestCase):
             d = fooddb.parse_food("50g mixed nuts and 1 banana")
         self.assertEqual(d["calories"], 372)  # 265 nuts + 107 banana
         self.assertIn("Banana", d["item_name"])
+        self.assertEqual(d["protein_g"], 6.2)
         fs.assert_called_once_with("50g mixed nuts")
 
     def test_parse_fatsecret_one_boiled_egg_not_pie(self):

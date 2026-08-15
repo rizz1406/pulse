@@ -1,4 +1,5 @@
 let pending=null, charts={};
+const fmtMacro=v=>{const n=Number(v);return Number.isFinite(n)?Number(n.toFixed(1)):0;};
 
 /* ---------- AUTH ---------- */
 async function checkAuth(){
@@ -238,7 +239,7 @@ function handleResult(d){
     s.innerHTML=`<div class="ph">🍽 ${esc(d.item_name)}</div>
       <div class="kcal">${d.calories} kcal</div>
       <div class="macros">
-        <span>💪 ${d.protein_g}g protein</span><span>🍞 ${d.carbs_g}g carbs</span><span>🥑 ${d.fat_g}g fat</span>
+        <span>💪 ${fmtMacro(d.protein_g)}g protein</span><span>🍞 ${fmtMacro(d.carbs_g)}g carbs</span><span>🥑 ${fmtMacro(d.fat_g)}g fat</span>
         <span>🌾 ${d.fiber_g}g fiber</span><span>🍬 ${d.sugar_g}g sugar</span></div>
       ${noNutrition?`<div class="note">⚠️ Couldn't find nutrition for this — it will be logged as 0 kcal. Edit it after logging to add calories.</div>`:''}
       ${d.source==='ai_estimate'?`<div class="note">🤖 Estimated by the AI for a standard portion — Log it, then tap the card to adjust if it looks off.</div>`:''}
@@ -486,7 +487,7 @@ function renderToday(d){
   d.foods.forEach(f=>{
     html+=`<div class="entry" onclick='openEdit("food",${f.id},${jsObj(f)})'><div class="emoji">🍽</div><div class="body">
       <div class="t">${esc(f.item_name)}</div>
-      <div class="s">${f.calories} kcal · ${f.protein_g}p / ${f.carbs_g}c / ${f.fat_g}f</div></div>
+      <div class="s">${f.calories} kcal · ${fmtMacro(f.protein_g)}p / ${fmtMacro(f.carbs_g)}c / ${fmtMacro(f.fat_g)}f</div></div>
       <div class="time">${f.ts.slice(11,16)}</div>
       <div class="del" onclick='event.stopPropagation();del("food",${f.id})'>✕</div></div>`;
   });
