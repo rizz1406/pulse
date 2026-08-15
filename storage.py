@@ -52,6 +52,11 @@ def init_db():
                 ts TEXT, day TEXT, ml INTEGER
             )""")
         c.execute("""
+            CREATE TABLE IF NOT EXISTS steps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT, day TEXT UNIQUE, steps INTEGER
+            )""")
+        c.execute("""
             CREATE TABLE IF NOT EXISTS custom_food (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT COLLATE NOCASE UNIQUE,
@@ -117,6 +122,19 @@ def save_weight(kg, notes="", photo=None):
                   (now.strftime("%Y-%m-%d %H:%M:%S"), now.strftime("%Y-%m-%d"),
                    _float(kg), notes, photo or ""))
     goals.maybe_adapt_targets()
+
+
+def save_steps(total):
+    """Set today's step total. Repeated saves replace instead of double-counting."""
+    now = _now()
+    value = max(0, min(_int(total), 100000))
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO steps (ts, day, steps) VALUES (?,?,?) "
+            "ON CONFLICT(day) DO UPDATE SET ts=excluded.ts, steps=excluded.steps",
+            (now.strftime("%Y-%m-%d %H:%M:%S"), now.strftime("%Y-%m-%d"), value),
+        )
+    return value
 
 
 def delete_entry(kind, entry_id):
@@ -319,6 +337,9 @@ def today_data(conn=None):
         "SELECT weight_kg FROM weight WHERE day=? ORDER BY id DESC LIMIT 1",
         (day,),
     ).fetchone()
+    today_steps = conn.execute(
+        "SELECT steps FROM steps WHERE day=? LIMIT 1", (day,)
+    ).fetchone()
     totals = {
         "calories": sum((r["calories"] or 0 for r in foods), 0),
         "protein": sum((r["protein_g"] or 0 for r in foods), 0),
@@ -340,6 +361,8 @@ def today_data(conn=None):
         "protein_target": config.DAILY_PROTEIN_TARGET,
         "today_weight": today_weight["weight_kg"] if today_weight else None,
         "weigh_in_due": today_weight is None,
+        "steps_today": today_steps["steps"] if today_steps else 0,
+        "step_target": config.DAILY_STEP_TARGET,
     }
 
 
@@ -512,6 +535,57 @@ def weight_trend(days_back=60):
     }
 
 
+def lean_bulk_report(targets, coach, days_back=7):
+    """Seven-day adherence snapshot for an active lean-bulk goal."""
+    if not targets or targets.get("objective") != "lean_bulk":
+        return {"active": False}
+    today = _now().date()
+    start = (today - timedelta(days=days_back - 1)).isoformat()
+    with _conn() as c:
+        food_rows = c.execute(
+            "SELECT day, SUM(calories) cal, SUM(protein_g) protein "
+            "FROM food WHERE day>=? GROUP BY day", (start,),
+        ).fetchall()
+        workout = c.execute(
+            "SELECT COUNT(*) total, COUNT(DISTINCT day) days FROM workout WHERE day>=?",
+            (start,),
+        ).fetchone()
+        step_rows = c.execute(
+            "SELECT day, steps FROM steps WHERE day>=? ORDER BY day", (start,),
+        ).fetchall()
+
+    days_logged = len(food_rows)
+    avg_cal = round(sum(r["cal"] for r in food_rows) / days_logged) if days_logged else 0
+    avg_protein = round(
+        sum(r["protein"] for r in food_rows) / days_logged) if days_logged else 0
+    step_days = len(step_rows)
+    avg_steps = round(sum(r["steps"] for r in step_rows) / step_days) if step_days else 0
+    cal_target = int(targets.get("calories") or 0)
+    protein_target = int(targets.get("protein") or 0)
+    step_target = config.DAILY_STEP_TARGET
+    return {
+        "active": True,
+        "days": days_back,
+        "days_logged": days_logged,
+        "avg_calories": avg_cal,
+        "calorie_target": cal_target,
+        "calorie_adherence": round(avg_cal / cal_target * 100) if cal_target else 0,
+        "avg_protein": avg_protein,
+        "protein_target": protein_target,
+        "protein_adherence": round(avg_protein / protein_target * 100) if protein_target else 0,
+        "workouts": workout["total"],
+        "workout_days": workout["days"],
+        "avg_steps": avg_steps,
+        "step_target": step_target,
+        "step_days_logged": step_days,
+        "step_days_hit": len([r for r in step_rows if r["steps"] >= step_target]),
+        "weight_rate": coach.get("rate_kg_per_week") if coach else None,
+        "weight_average": coach.get("average_7d") if coach else None,
+        "weight_target_min": coach.get("target_min", goals.LEAN_BULK_MIN_GAIN) if coach else goals.LEAN_BULK_MIN_GAIN,
+        "weight_target_max": coach.get("target_max", goals.LEAN_BULK_MAX_GAIN) if coach else goals.LEAN_BULK_MAX_GAIN,
+    }
+
+
 def get_food(entry_id):
     with _conn() as c:
         r = c.execute("SELECT * FROM food WHERE id=?", (entry_id,)).fetchone()
@@ -566,7 +640,7 @@ def weekly_summary(days_back=7):
 # EXPORT
 # ─────────────────────────────────────────────────────────────
 def export_csv(kind):
-    """CSV text for one table: 'food' | 'workout' | 'weight' | 'water'."""
+    """CSV text for one tracked data table."""
     columns = {
         "food": ["id", "ts", "day", "item_name", "calories", "protein_g",
                  "carbs_g", "fat_g", "fiber_g", "sugar_g", "notes", "raw_input"],
@@ -574,6 +648,7 @@ def export_csv(kind):
                     "sets", "reps", "notes", "raw_input"],
         "weight": ["id", "ts", "day", "weight_kg", "notes"],
         "water": ["id", "ts", "day", "ml"],
+        "steps": ["id", "ts", "day", "steps"],
     }
     if kind not in columns:
         return None

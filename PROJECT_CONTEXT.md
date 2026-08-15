@@ -42,7 +42,7 @@ health-bot/
 - **Offline**: `getJSON()` caches successful responses in localStorage; serves stale data when offline
 
 ## Database/Storage
-- **Tables**: `food`, `workout`, `weight`, `water`, `goal`, `portion_memory`
+- **Tables**: `food`, `workout`, `weight`, `water`, `steps`, `goal`, `portion_memory`
 - **Backend**: `db.py` wraps both `sqlite3` (local) and `libsql` (Turso) with identical cursor interface
 - **WAL mode + busy_timeout** for local SQLite concurrency
 - **No ORM** — raw SQL with parameterized queries
@@ -101,9 +101,10 @@ Two entry types in `FOODS` dict (`fooddb.py:42-160`):
 - `/api/relog` (POST): one-tap re-log of recent meal
 - `/api/recents`: distinct recent meals (frequency-ordered) for quick-add chips
 
-## Goals, Water, Workout, Weight
+## Goals, Water, Steps, Workout, Weight
 - **Goals** (`goals.py`): Mifflin-St Jeor BMR × activity → TDEE + objective delta. Protein = kg × obj_factor (2.0-2.2). Fat = kg × 0.8. Carbs = remainder. Auto-recalculates on new weight log.
 - **Water** (`storage.py:120-144`): quick add (default 250ml), undo (removes last), target from `WATER_TARGET_ML`
+- **Steps**: manual daily total (repeated saves replace the day), default target from `DAILY_STEP_TARGET`
 - **Workout**: exercise_name, weight_kg (0=bodyweight), sets, reps, notes
 - **Weight**: single kg value + notes; latest weight drives live goal targets
 
@@ -139,6 +140,7 @@ Two entry types in `FOODS` dict (`fooddb.py:42-160`):
 | POST | `/api/goal` | Save goal (auto-logs weight) |
 | POST | `/api/preview_targets` | Live calc without saving |
 | POST | `/api/water` | Add/undo water |
+| POST | `/api/steps` | Set today's manual step total |
 | GET | `/api/export` | CSV download |
 
 ## Environment Variable Names Only
@@ -152,6 +154,7 @@ DB_PATH              # Optional (default: health.db)
 DAILY_CAL_TARGET     # Fallback when no goal set
 DAILY_PROTEIN_TARGET # Fallback when no goal set
 WATER_TARGET_ML      # Default 2500
+DAILY_STEP_TARGET    # Default 5000
 OLLAMA_URL           # Optional local AI (default: http://localhost:11434)
 OLLAMA_MODEL         # Optional (default: qwen3:4b)
 OLLAMA_TIMEOUT       # Optional (default: 90)

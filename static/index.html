@@ -75,6 +75,20 @@
     </div>
   </div>
 
+  <!-- STEPS -->
+  <div class="steps-card glass">
+    <div class="steps-ico">👟</div>
+    <div class="steps-info">
+      <div class="t">Steps</div>
+      <div class="s" id="stepsSub">0 / 5,000</div>
+      <div class="steps-track"><div class="steps-fill" id="stepsFill" style="width:0"></div></div>
+    </div>
+    <div class="steps-entry">
+      <input id="stepsInput" type="number" min="0" max="100000" step="100" inputmode="numeric" placeholder="5000">
+      <button onclick="saveSteps()">Save</button>
+    </div>
+  </div>
+
   <!-- TABS -->
   <div class="tabs">
     <div class="tab active" data-tab="today" onclick="switchTab('today')">Today</div>
@@ -125,6 +139,10 @@
   <!-- PROGRESS -->
   <div class="section" id="tab-progress">
     <div class="prog-hero card" id="progHero"></div>
+    <div class="card" id="leanBulkReportCard" style="display:none">
+      <h3>Weekly lean-bulk report <span class="hint">last 7 days</span></h3>
+      <div id="leanBulkReport"></div>
+    </div>
     <div class="card" id="photoStrip" style="display:none"></div>
     <div class="card"><h3>Weight <span class="hint">toward goal</span></h3><div class="chart-wrap"><canvas id="weightTrend"></canvas></div></div>
     <div class="card"><h3>Weight coach <span class="hint">is your goal on track?</span></h3><div id="paceBox"></div></div>

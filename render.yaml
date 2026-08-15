@@ -24,6 +24,8 @@ services:
         value: "120"
       - key: WATER_TARGET_ML
         value: "2500"
+      - key: DAILY_STEP_TARGET
+        value: "5000"
       - key: FATSECRET_CLIENT_ID
         sync: false
       - key: FATSECRET_CLIENT_SECRET

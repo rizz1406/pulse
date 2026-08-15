@@ -19,7 +19,7 @@ config.LOCAL_TZ = __import__("zoneinfo").ZoneInfo("UTC")
 
 def clean():
     with db.connect() as c:
-        for t in ("food", "workout", "weight", "water", "goal", "portion_memory", "custom_food"):
+        for t in ("food", "workout", "weight", "water", "steps", "goal", "portion_memory", "custom_food"):
             c.execute(f"DELETE FROM {t}")
 
 
@@ -125,6 +125,35 @@ class TestStorage(unittest.TestCase):
         # undoing again with nothing left → removed=False
         removed3, _ = storage.undo_water()
         self.assertFalse(removed3)
+
+    def test_steps_replace_daily_total_and_export(self):
+        self.assertEqual(storage.save_steps(4200), 4200)
+        self.assertEqual(storage.save_steps(5300), 5300)
+        today = storage.today_data()
+        self.assertEqual(today["steps_today"], 5300)
+        self.assertEqual(today["step_target"], 5000)
+        csv_text = storage.export_csv("steps")
+        self.assertEqual(csv_text.count("\n"), 2)
+        self.assertIn("5300", csv_text)
+
+    def test_lean_bulk_weekly_report(self):
+        storage.save_food({"item_name": "Meal", "calories": 2900,
+                           "protein_g": 150, "carbs_g": 350, "fat_g": 80})
+        storage.save_workout({"exercise_name": "Squat", "weight_kg": 80,
+                              "sets": 3, "reps": 5})
+        storage.save_steps(5200)
+        report = storage.lean_bulk_report(
+            {"objective": "lean_bulk", "calories": 3000, "protein": 153},
+            {"rate_kg_per_week": 0.2, "average_7d": 76.7,
+             "target_min": 0.15, "target_max": 0.25},
+        )
+        self.assertTrue(report["active"])
+        self.assertEqual(report["avg_calories"], 2900)
+        self.assertEqual(report["avg_protein"], 150)
+        self.assertEqual(report["workouts"], 1)
+        self.assertEqual(report["avg_steps"], 5200)
+        self.assertEqual(report["step_days_hit"], 1)
+        self.assertEqual(report["weight_rate"], 0.2)
 
     def test_weekly_summary(self):
         storage.save_food({"item_name": "Dal", "calories": 300, "protein_g": 15,

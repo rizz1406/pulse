@@ -447,6 +447,7 @@ class TestWeeklyAnalytics(unittest.TestCase):
             c.execute("DELETE FROM workout")
             c.execute("DELETE FROM weight")
             c.execute("DELETE FROM water")
+            c.execute("DELETE FROM steps")
 
     def test_weekly_macro_analytics_empty(self):
         """Empty week returns zero values."""

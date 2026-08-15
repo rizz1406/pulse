@@ -21,7 +21,7 @@ config.LOCAL_TZ = __import__("zoneinfo").ZoneInfo("UTC")
 
 def clean():
     with db.connect() as c:
-        for t in ("food", "workout", "weight", "water", "goal", "portion_memory"):
+        for t in ("food", "workout", "weight", "water", "steps", "goal", "portion_memory"):
             c.execute(f"DELETE FROM {t}")
 
 

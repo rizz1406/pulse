@@ -121,6 +121,16 @@ header{padding:24px 0 8px;display:flex;align-items:center;justify-content:space-
 .water-undo{background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;
   text-decoration:underline;padding:10px 0 0;min-height:32px}
 
+/* ---- Steps card ---- */
+.steps-card{border-radius:var(--radius);padding:16px 20px;margin-top:10px;display:flex;align-items:center;gap:14px}
+.steps-ico{font-size:25px}.steps-info{flex:1;min-width:0}.steps-info .t{font-size:13px;font-weight:600}
+.steps-info .s{font-size:12px;color:var(--muted);margin-top:2px}
+.steps-track{height:7px;margin-top:8px;background:rgba(255,255,255,.07);border-radius:999px;overflow:hidden}
+.steps-fill{height:100%;background:linear-gradient(90deg,var(--accent),rgba(168,240,96,.45));border-radius:999px;transition:width .7s}
+.steps-entry{display:flex;flex-direction:column;gap:6px;width:92px}
+.steps-entry input{width:100%;box-sizing:border-box;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);padding:9px 8px;border-radius:10px;font-size:13px;outline:none}
+.steps-entry button{background:rgba(168,240,96,.12);border:1px solid var(--accent-dim);color:var(--accent);padding:8px;border-radius:10px;font-weight:700;cursor:pointer}
+
 /* ---- Input dock ---- */
 .dock{position:fixed;bottom:0;left:0;right:0;
   padding:20px 16px calc(18px + env(safe-area-inset-bottom));z-index:40;
@@ -316,6 +326,10 @@ h2.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:va
 .weight-prompt-label input{display:block;width:100%;box-sizing:border-box;margin-top:6px;background:var(--panel-2);border:1px solid var(--line-bright);color:var(--ink);padding:15px;border-radius:13px;font-size:22px;outline:none}
 .weight-prompt-label input:focus{border-color:var(--accent)}
 .reminder-disable{display:block;margin:14px auto 0;background:none;border:0;color:var(--muted);font-size:12px;text-decoration:underline;cursor:pointer}
+.bulk-report-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-top:12px}
+.bulk-report-item{background:var(--panel-2);border:1px solid var(--line);border-radius:13px;padding:12px}
+.bulk-report-item b{display:block;font-family:'Space Grotesk';font-size:17px}.bulk-report-item span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;margin-top:3px}
+.bulk-report-item small{display:block;color:var(--muted);font-size:11px;margin-top:5px}.bulk-report-item.good b{color:var(--accent)}.bulk-report-item.warn b{color:var(--fat)}
 /* Progress photos */
 .photo-scroll{display:flex;gap:10px;overflow-x:auto;padding:2px 2px 6px;-webkit-overflow-scrolling:touch}
 .photo-scroll img{width:92px;height:120px;object-fit:cover;border-radius:14px;cursor:pointer;flex-shrink:0;border:1px solid var(--line-bright)}

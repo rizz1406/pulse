@@ -42,6 +42,8 @@ DAILY_CAL_TARGET = int(os.getenv("DAILY_CAL_TARGET", "2000"))
 DAILY_PROTEIN_TARGET = int(os.getenv("DAILY_PROTEIN_TARGET", "120"))
 # Hydration goal
 WATER_TARGET_ML = int(os.getenv("WATER_TARGET_ML", "2500"))
+# Daily walking target (manual total; phone integration is platform-specific).
+DAILY_STEP_TARGET = int(os.getenv("DAILY_STEP_TARGET", "5000"))
 
 # ── Local AI (Ollama) — free & unlimited, used for plain text ──
 # Runs a small model on your own machine: no API key, no quotas,

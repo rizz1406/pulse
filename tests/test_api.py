@@ -38,7 +38,7 @@ class TestAPI(unittest.TestCase):
         # wipe all tables
         from db import connect
         with connect() as c:
-            for t in ("food", "workout", "weight", "water", "goal", "portion_memory", "custom_food"):
+            for t in ("food", "workout", "weight", "water", "steps", "goal", "portion_memory", "custom_food"):
                 c.execute(f"DELETE FROM {t}")
         # reset session and log in fresh (app._ensure_db also runs on request)
         with self.client.session_transaction() as s:
@@ -194,6 +194,17 @@ class TestAPI(unittest.TestCase):
         r = self.client.post("/api/water", json={"undo": True})
         self.assertEqual(r.get_json()["water"]["ml"], 0)
 
+    def test_manual_steps_replace_today_total(self):
+        r = self.client.post("/api/steps", json={"steps": 4200})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["target"], 5000)
+        self.client.post("/api/steps", json={"steps": 5600})
+        today = self.client.get("/api/today").get_json()
+        self.assertEqual(today["steps_today"], 5600)
+        self.assertEqual(today["step_target"], 5000)
+        self.assertEqual(self.client.post("/api/steps", json={"steps": -1}).status_code, 400)
+        self.assertEqual(self.client.post("/api/steps", json={"steps": "many"}).status_code, 400)
+
     def test_relog_unknown_404(self):
         r = self.client.post("/api/relog", json={"item_name": "never logged"})
         self.assertEqual(r.status_code, 404)
@@ -259,6 +270,8 @@ class TestAPI(unittest.TestCase):
         progress = self.client.get("/api/progress?days=60").get_json()
         self.assertTrue(progress["coach"]["active"])
         self.assertEqual(progress["calorie_adjustment"], 0)
+        self.assertTrue(progress["weekly_report"]["active"])
+        self.assertEqual(progress["weekly_report"]["step_target"], 5000)
 
     # ── analytics / export ──
     def test_analytics_reflects_db(self):

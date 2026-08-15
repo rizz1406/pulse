@@ -82,6 +82,7 @@ async function getJSON(url){
 async function loadProgress(){
   const d=await getJSON('/api/progress?days=60');
   if(!d) return;
+  renderLeanBulkReport(d.weekly_report);
   const hero=document.getElementById('progHero');
   if(!d.current){
     hero.innerHTML='<div class="empty" style="padding:20px">Log your weight to start tracking progress.<br>Just type "I weigh 77kg" below.</div>';
@@ -442,6 +443,24 @@ async function confirmEntry(){
     successBurst();
   }
 }
+function renderLeanBulkReport(r){
+  const card=document.getElementById('leanBulkReportCard');
+  const box=document.getElementById('leanBulkReport');
+  if(!r||!r.active){card.style.display='none';return;}
+  const adherenceClass=v=>v>=90&&v<=110?'good':(v?'warn':'');
+  const rate=r.weight_rate==null?null:Number(r.weight_rate);
+  const weightGood=rate!=null&&rate>=r.weight_target_min&&rate<=r.weight_target_max;
+  const weightText=rate==null?'Collecting':`${rate>=0?'+':''}${rate.toFixed(2)} kg/wk`;
+  box.innerHTML=`<div class="bulk-report-grid">
+    <div class="bulk-report-item ${weightGood?'good':(rate==null?'':'warn')}"><b>${weightText}</b><span>Weight trend</span><small>target +${r.weight_target_min}–${r.weight_target_max} kg/wk</small></div>
+    <div class="bulk-report-item ${adherenceClass(r.calorie_adherence)}"><b>${Number(r.avg_calories).toLocaleString()} kcal</b><span>Average calories</span><small>${r.calorie_adherence}% of ${Number(r.calorie_target).toLocaleString()}</small></div>
+    <div class="bulk-report-item ${r.protein_adherence>=90?'good':(r.protein_adherence?'warn':'')}"><b>${r.avg_protein}g</b><span>Average protein</span><small>${r.protein_adherence}% of ${r.protein_target}g</small></div>
+    <div class="bulk-report-item"><b>${r.workouts}</b><span>Workouts</span><small>${r.workout_days} training days</small></div>
+    <div class="bulk-report-item ${r.avg_steps>=r.step_target?'good':(r.step_days_logged?'warn':'')}"><b>${Number(r.avg_steps).toLocaleString()}</b><span>Average steps</span><small>${r.step_days_hit}/${r.step_days_logged} logged days hit ${Number(r.step_target).toLocaleString()}</small></div>
+    <div class="bulk-report-item"><b>${r.days_logged}/7</b><span>Nutrition days</span><small>averages use logged days</small></div>
+  </div>`;
+  card.style.display='block';
+}
 
 function syncPendingFood(){
   if(!pending||pending.type!=='food') return;
@@ -614,6 +633,12 @@ function renderToday(d){
   animateCount('waterTot', wtr);
   document.getElementById('waterFill').style.width=Math.min(wtr/wtg*100,100)+'%';
   document.getElementById('waterSub').textContent=(wtr/1000).toFixed(1)+' / '+(wtg/1000)+' L';
+  // manually recorded daily steps
+  const steps=Number(d.steps_today||0), stepTarget=Number(d.step_target||5000);
+  document.getElementById('stepsSub').textContent=`${steps.toLocaleString()} / ${stepTarget.toLocaleString()}`;
+  document.getElementById('stepsFill').style.width=Math.min(steps/stepTarget*100,100)+'%';
+  const stepsInput=document.getElementById('stepsInput');
+  if(document.activeElement!==stepsInput) stepsInput.value=steps||'';
   // list
   const list=document.getElementById('todayList');
   let html='';
@@ -705,6 +730,17 @@ async function undoWater(){
     if(!r.ok){toast(d.error||'Nothing to undo');return;}
     if(d.ok){ toast('Removed last water'); refreshToday(); } else toast(d.error||'Nothing to undo');
   }catch(e){toast('Could not undo — check connection');}
+}
+async function saveSteps(){
+  const input=document.getElementById('stepsInput');
+  const steps=Number(input.value);
+  if(!Number.isInteger(steps)||steps<0||steps>100000) return toast('Enter steps from 0 to 100,000');
+  try{
+    const r=await fetch('/api/steps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({steps})});
+    const d=await r.json();
+    if(!r.ok||!d.ok) return toast(d.error||'Could not save steps');
+    toast(`${steps.toLocaleString()} steps saved`); refreshToday();
+  }catch(e){toast('Could not save steps — check connection');}
 }
 
 /* ---------- RECENTS (quick re-log) ---------- */

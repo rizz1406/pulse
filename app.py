@@ -35,7 +35,7 @@ app.secret_key = config.SECRET_KEY
 # tables lazily on the first request, which runs inside the worker.
 _db_ready = False
 _db_init_lock = threading.Lock()
-_SCHEMA_MARKER = "app_schema_v1"
+_SCHEMA_MARKER = "app_schema_v2"
 
 
 def _schema_is_current():
@@ -351,7 +351,9 @@ def progress():
         data["target_cal"] = t["calories"]
         data["objective"] = t.get("objective")
         data["calorie_adjustment"] = t.get("calorie_adjustment", 0)
-    data["coach"] = goals.weight_coach()
+    coach = goals.weight_coach()
+    data["coach"] = coach
+    data["weekly_report"] = storage.lean_bulk_report(t, coach)
     g = goals.get_goal()
     data["bmi"] = goals.bmi(data.get("current"), g.get("height_cm") if g else None)
     return jsonify(data)
@@ -447,6 +449,23 @@ def water():
     except (TypeError, ValueError):
         return jsonify({"error": "bad ml"}), 400
     return jsonify({"ok": True, "water": storage.add_water(ml)})
+
+
+@app.route("/api/steps", methods=["POST"])
+@login_required
+def steps():
+    d = request.get_json(force=True) or {}
+    try:
+        total = int(d.get("steps"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid steps"}), 400
+    if not 0 <= total <= 100000:
+        return jsonify({"error": "steps out of range"}), 400
+    return jsonify({
+        "ok": True,
+        "steps": storage.save_steps(total),
+        "target": config.DAILY_STEP_TARGET,
+    })
 
 
 @app.route("/api/weekly")
