@@ -479,7 +479,7 @@ def _parse_single(text):
                 data["cal"], data["p"], data["c"], data["f"],
                 data["serving_g"], qty, gram_mode)
 
-        item_name = _item_name(unit_key, qty, gram_mode, ml_mode)
+        item_name = _item_name(unit_key, qty, gram_mode, ml_mode, t)
         return _build_result(
             item_name=item_name,
             cal=cal, p=p, c=c, f=f,
@@ -502,7 +502,7 @@ def _parse_single(text):
                 # Per-serving item matched by substring — use qty from extraction
                 cal, p, c, f = _calc_serving_nutrition(
                     data["cal"], data["p"], data["c"], data["f"], qty)
-                item_name = _item_name(key, qty, gram_mode, ml_mode)
+                item_name = _item_name(key, qty, gram_mode, ml_mode, t)
                 return _build_result(
                     item_name=item_name,
                     cal=cal, p=p, c=c, f=f,
@@ -517,7 +517,7 @@ def _parse_single(text):
                 cal, p, c, f = _calc_nutrition(
                     data["cal"], data["p"], data["c"], data["f"],
                     data["serving_g"], qty, gram_mode)
-                item_name = _item_name(key, qty, gram_mode, ml_mode)
+                item_name = _item_name(key, qty, gram_mode, ml_mode, t)
                 return _build_result(
                     item_name=item_name,
                     cal=cal, p=p, c=c, f=f,
@@ -537,7 +537,7 @@ def _parse_single(text):
             cal, p, c, f = _calc_nutrition(
                 data["cal"], data["p"], data["c"], data["f"],
                 data["serving_g"], qty, gram_mode)
-            item_name = _item_name(key, qty, gram_mode, ml_mode)
+            item_name = _item_name(key, qty, gram_mode, ml_mode, t)
             return _build_result(
                 item_name=item_name,
                 cal=cal, p=p, c=c, f=f,
@@ -558,7 +558,7 @@ def _parse_single(text):
             cal, p, c, f = _calc_nutrition(
                 data["cal"], data["p"], data["c"], data["f"],
                 data["serving_g"], qty, gram_mode)
-            item_name = _item_name(key, qty, gram_mode, ml_mode)
+            item_name = _item_name(key, qty, gram_mode, ml_mode, t)
             return _build_result(
                 item_name=item_name,
                 cal=cal, p=p, c=c, f=f,
@@ -646,7 +646,7 @@ def _qty_word(qty):
     return f"{qty:.1f}"
 
 
-def _item_name(key, qty, gram_mode, ml_mode=False):
+def _item_name(key, qty, gram_mode, ml_mode=False, original_text=""):
     """Human-readable name for a parsed food. In gram/ml mode the qty is a
     per-100 multiplier, so show the real amount ('200g Dal') instead of a
     count ('2 Dal')."""
@@ -656,6 +656,11 @@ def _item_name(key, qty, gram_mode, ml_mode=False):
         return f"{int(round(qty * 100))}g {key.title()}" if qty * 100 == int(qty * 100) else f"{qty * 100:g}g {key.title()}"
     if qty != 1:
         return f"{_qty_word(qty)} {key.title()}"
+    explicit_one = bool(re.search(
+        r'(?<![\d.])1(?:\.0+)?\s*(?:x\s*)?[a-z]|\bone\s+[a-z]',
+        original_text, re.I))
+    if explicit_one:
+        return f"1 {key.title()}"
     return key.title()
 
 
@@ -1071,7 +1076,9 @@ def parse_fatsecret(text):
     if gram_mode:
         amount = qty * 100
         unit = "ml" if ml_mode else "g"
-        item_name = f"{amount:g}{unit} {name.title()}"
+        # Display the user's food words; keep FatSecret's normalized match in
+        # matched_food/audit metadata instead of replacing the visible title.
+        item_name = f"{amount:g}{unit} {search_query.title()}"
         portion_note = (f"requested {amount:g}{unit}; FatSecret metric reference "
                         f"{parsed['ref_amount']:g}{parsed['ref_unit']}")
     else:

@@ -199,6 +199,10 @@ class TestFoodDB(unittest.TestCase):
         # banana per-100g=89, serving=120g, qty=2 → 89*1.2*2 = 213.6 ≈ 214
         self.assertEqual(d["calories"], 214)
 
+    def test_explicit_one_is_preserved_in_display_name(self):
+        d = fooddb.parse_local("1 banana")
+        self.assertEqual(d["item_name"], "1 Banana")
+
     def test_qty_half_bowl(self):
         """'half bowl rice' = 0.5 servings."""
         d = fooddb.parse_local("half bowl rice")
@@ -535,14 +539,27 @@ class TestFatSecret(unittest.TestCase):
         """50g nuts plus a banana sums both independently parsed items."""
         from unittest import mock
         nuts = fooddb._build_result(
-            "Mixed Nuts", 265, 5, 19, 19, "fatsecret", "Mixed Nuts",
+            "50g Nuts", 265, 5, 19, 19, "fatsecret", "Mixed Nuts",
             100, 0.5, "FatSecret metric serving")
         with mock.patch.object(fooddb, "parse_fatsecret", return_value=nuts) as fs:
-            d = fooddb.parse_food("50g mixed nuts and 1 banana")
+            d = fooddb.parse_food("1 banana and 50g mixed nuts")
         self.assertEqual(d["calories"], 372)  # 265 nuts + 107 banana
-        self.assertIn("Banana", d["item_name"])
+        self.assertEqual(d["item_name"], "1 Banana + 50g Nuts")
         self.assertEqual(d["protein_g"], 6.2)
         fs.assert_called_once_with("50g mixed nuts")
+
+    def test_fatsecret_display_keeps_users_generic_food_word(self):
+        """The preview says Nuts while audit metadata keeps Mixed Nuts."""
+        from unittest import mock
+        results = [{"food_id": "123", "food_name": "Mixed Nuts",
+                    "food_description":
+                    "Per 100g - Calories: 607kcal | Fat: 54g | Carbs: 21g | Protein: 20g"}]
+        with mock.patch.object(fooddb, "config") as cfg, \
+                mock.patch.object(fooddb, "_fs_search", return_value=results):
+            cfg.FATSECRET_CLIENT_ID = "test"
+            d = fooddb.parse_fatsecret("50g nuts")
+        self.assertEqual(d["item_name"], "50g Nuts")
+        self.assertEqual(d["matched_food"], "Mixed Nuts")
 
     def test_parse_fatsecret_one_boiled_egg_not_pie(self):
         """Regression: 'one boiled egg' must search 'boiled egg', never match
