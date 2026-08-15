@@ -1,4 +1,5 @@
 let pending=null, charts={};
+let stepsState={saved:0,target:5000,editing:false,saving:false};
 const fmtMacro=v=>{const n=Number(v);return Number.isFinite(n)?Number(n.toFixed(1)):0;};
 const fmtOptional=v=>v==null?'—':`${fmtMacro(v)}g`;
 
@@ -634,11 +635,11 @@ function renderToday(d){
   document.getElementById('waterFill').style.width=Math.min(wtr/wtg*100,100)+'%';
   document.getElementById('waterSub').textContent=(wtr/1000).toFixed(1)+' / '+(wtg/1000)+' L';
   // manually recorded daily steps
-  const steps=Number(d.steps_today||0), stepTarget=Number(d.step_target||5000);
-  document.getElementById('stepsSub').textContent=`${steps.toLocaleString()} / ${stepTarget.toLocaleString()}`;
-  document.getElementById('stepsFill').style.width=Math.min(steps/stepTarget*100,100)+'%';
-  const stepsInput=document.getElementById('stepsInput');
-  if(document.activeElement!==stepsInput) stepsInput.value=steps||'';
+  if(!stepsState.saving){
+    stepsState.saved=Number(d.steps_today||0);
+    stepsState.target=Number(d.step_target||5000);
+  }
+  renderStepsCard();
   // list
   const list=document.getElementById('todayList');
   let html='';
@@ -731,16 +732,69 @@ async function undoWater(){
     if(d.ok){ toast('Removed last water'); refreshToday(); } else toast(d.error||'Nothing to undo');
   }catch(e){toast('Could not undo — check connection');}
 }
+function renderStepsCard(){
+  const {saved,target,editing,saving}=stepsState;
+  document.getElementById('stepsValue').textContent=saved.toLocaleString();
+  document.getElementById('stepsSub').textContent=`Goal ${target.toLocaleString()}`;
+  document.getElementById('stepsFill').style.width=Math.min(saved/target*100,100)+'%';
+  const state=document.getElementById('stepsSaveState');
+  state.textContent=saving?'Saving...':'today';
+  state.classList.toggle('saving',saving);
+  document.getElementById('stepsEditButton').hidden=editing||saving;
+  document.getElementById('stepsEditButton').textContent=saved?'Edit':'Add steps';
+  document.getElementById('stepsEditor').hidden=!editing;
+  document.getElementById('stepsSaveButton').disabled=saving;
+}
+function editSteps(){
+  if(stepsState.saving) return;
+  stepsState.editing=true;
+  const input=document.getElementById('stepsInput');
+  input.value=stepsState.saved||'';
+  renderStepsCard();
+  requestAnimationFrame(()=>{input.focus();input.select();});
+}
+function cancelStepsEdit(){
+  stepsState.editing=false;
+  renderStepsCard();
+}
+function cacheSavedSteps(steps,target){
+  try{
+    const key='pulse-cache:/api/today';
+    const cached=JSON.parse(localStorage.getItem(key));
+    if(!cached) return;
+    cached.steps_today=steps;
+    cached.step_target=target;
+    localStorage.setItem(key,JSON.stringify(cached));
+  }catch(e){}
+}
 async function saveSteps(){
   const input=document.getElementById('stepsInput');
   const steps=Number(input.value);
   if(!Number.isInteger(steps)||steps<0||steps>100000) return toast('Enter steps from 0 to 100,000');
+  if(stepsState.saving) return;
+  const previous=stepsState.saved;
+  stepsState.saved=steps;
+  stepsState.editing=false;
+  stepsState.saving=true;
+  cacheSavedSteps(steps,stepsState.target);
+  renderStepsCard();
   try{
     const r=await fetch('/api/steps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({steps})});
     const d=await r.json();
-    if(!r.ok||!d.ok) return toast(d.error||'Could not save steps');
-    toast(`${steps.toLocaleString()} steps saved`); refreshToday();
-  }catch(e){toast('Could not save steps — check connection');}
+    if(!r.ok||!d.ok) throw new Error(d.error||'Could not save steps');
+    stepsState.target=Number(d.target||stepsState.target);
+    stepsState.saving=false;
+    cacheSavedSteps(steps,stepsState.target);
+    renderStepsCard();
+    toast(`${steps.toLocaleString()} steps saved`);
+  }catch(e){
+    stepsState.saved=previous;
+    stepsState.saving=false;
+    stepsState.editing=true;
+    cacheSavedSteps(previous,stepsState.target);
+    renderStepsCard();
+    toast(e.message||'Could not save steps — check connection');
+  }
 }
 
 /* ---------- RECENTS (quick re-log) ---------- */

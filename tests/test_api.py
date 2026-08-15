@@ -205,6 +205,17 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(self.client.post("/api/steps", json={"steps": -1}).status_code, 400)
         self.assertEqual(self.client.post("/api/steps", json={"steps": "many"}).status_code, 400)
 
+    def test_steps_ui_has_editable_optimistic_control(self):
+        page = self.client.get("/").get_data(as_text=True)
+        script = self.client.get("/app.js").get_data(as_text=True)
+        self.assertIn('id="stepsEditButton"', page)
+        self.assertIn('id="stepsEditor"', page)
+        self.assertIn("stepsState.saved=steps", script)
+        save_steps = script.split("async function saveSteps(){", 1)[1].split(
+            "/* ---------- RECENTS", 1
+        )[0]
+        self.assertNotIn("refreshToday()", save_steps)
+
     def test_relog_unknown_404(self):
         r = self.client.post("/api/relog", json={"item_name": "never logged"})
         self.assertEqual(r.status_code, 404)

@@ -77,16 +77,27 @@
 
   <!-- STEPS -->
   <div class="steps-card glass">
+    <div class="steps-main">
     <div class="steps-ico">👟</div>
     <div class="steps-info">
-      <div class="t">Steps</div>
-      <div class="s" id="stepsSub">0 / 5,000</div>
+      <div class="t">Daily steps</div>
+      <div class="s" id="stepsSub">Goal 5,000</div>
       <div class="steps-track"><div class="steps-fill" id="stepsFill" style="width:0"></div></div>
     </div>
-    <div class="steps-entry">
-      <input id="stepsInput" type="number" min="0" max="100000" step="100" inputmode="numeric" placeholder="5000">
-      <button onclick="saveSteps()">Save</button>
+      <div class="steps-summary">
+        <strong id="stepsValue">0</strong>
+        <span id="stepsSaveState">today</span>
+        <button id="stepsEditButton" type="button" onclick="editSteps()">Add steps</button>
+      </div>
     </div>
+    <form class="steps-entry" id="stepsEditor" onsubmit="event.preventDefault();saveSteps()" hidden>
+      <label for="stepsInput">Today's total</label>
+      <div class="steps-entry-row">
+        <input id="stepsInput" type="number" min="0" max="100000" step="1" inputmode="numeric" placeholder="e.g. 5000">
+        <button class="steps-cancel" type="button" onclick="cancelStepsEdit()">Cancel</button>
+        <button class="steps-save" id="stepsSaveButton" type="submit">Save</button>
+      </div>
+    </form>
   </div>
 
   <!-- TABS -->

@@ -104,7 +104,7 @@ Two entry types in `FOODS` dict (`fooddb.py:42-160`):
 ## Goals, Water, Steps, Workout, Weight
 - **Goals** (`goals.py`): Mifflin-St Jeor BMR × activity → TDEE + objective delta. Protein = kg × obj_factor (2.0-2.2). Fat = kg × 0.8. Carbs = remainder. Auto-recalculates on new weight log.
 - **Water** (`storage.py:120-144`): quick add (default 250ml), undo (removes last), target from `WATER_TARGET_ML`
-- **Steps**: manual daily total (repeated saves replace the day), default target from `DAILY_STEP_TARGET`
+- **Steps**: editable manual daily total (repeated saves replace the day), optimistic UI save, default target from `DAILY_STEP_TARGET`
 - **Workout**: exercise_name, weight_kg (0=bodyweight), sets, reps, notes
 - **Weight**: single kg value + notes; latest weight drives live goal targets
 
