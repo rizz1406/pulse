@@ -535,7 +535,7 @@ def weight_trend(days_back=60):
     }
 
 
-def lean_bulk_report(targets, coach, days_back=7):
+def lean_bulk_report(targets, coach, days_back=7, step_target=None):
     """Seven-day adherence snapshot for an active lean-bulk goal."""
     if not targets or targets.get("objective") != "lean_bulk":
         return {"active": False}
@@ -562,7 +562,7 @@ def lean_bulk_report(targets, coach, days_back=7):
     avg_steps = round(sum(r["steps"] for r in step_rows) / step_days) if step_days else 0
     cal_target = int(targets.get("calories") or 0)
     protein_target = int(targets.get("protein") or 0)
-    step_target = config.DAILY_STEP_TARGET
+    step_target = int(step_target or config.DAILY_STEP_TARGET)
     return {
         "active": True,
         "days": days_back,

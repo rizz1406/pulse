@@ -71,6 +71,13 @@ class TestGoals(unittest.TestCase):
             n = c.execute("SELECT COUNT(*) n FROM weight").fetchone()["n"]
         self.assertEqual(n, 1)
 
+    def test_step_target_defaults_and_persists_with_goal(self):
+        self.assertEqual(goals.get_step_target(), config.DAILY_STEP_TARGET)
+        goals.save_goal(180, 25, "male", "moderate", "maintain", 75,
+                        step_target=7500)
+        self.assertEqual(goals.get_step_target(), 7500)
+        self.assertEqual(goals.get_goal()["step_target"], 7500)
+
     def test_bmi(self):
         self.assertEqual(goals.bmi(80, 180), 24.7)  # 80 / 1.8² = 24.69…
         self.assertEqual(goals.bmi(50, 160), 19.5)

@@ -146,13 +146,15 @@ class TestStorage(unittest.TestCase):
             {"objective": "lean_bulk", "calories": 3000, "protein": 153},
             {"rate_kg_per_week": 0.2, "average_7d": 76.7,
              "target_min": 0.15, "target_max": 0.25},
+            step_target=6000,
         )
         self.assertTrue(report["active"])
         self.assertEqual(report["avg_calories"], 2900)
         self.assertEqual(report["avg_protein"], 150)
         self.assertEqual(report["workouts"], 1)
         self.assertEqual(report["avg_steps"], 5200)
-        self.assertEqual(report["step_days_hit"], 1)
+        self.assertEqual(report["step_target"], 6000)
+        self.assertEqual(report["step_days_hit"], 0)
         self.assertEqual(report["weight_rate"], 0.2)
 
     def test_weekly_summary(self):

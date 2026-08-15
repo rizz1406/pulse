@@ -208,8 +208,13 @@ class TestAPI(unittest.TestCase):
     def test_steps_ui_has_editable_optimistic_control(self):
         page = self.client.get("/").get_data(as_text=True)
         script = self.client.get("/app.js").get_data(as_text=True)
+        styles = self.client.get("/style.css").get_data(as_text=True)
         self.assertIn('id="stepsEditButton"', page)
         self.assertIn('id="stepsEditor"', page)
+        self.assertIn('id="gSteps"', page)
+        self.assertIn("viewport-fit=cover", page)
+        self.assertNotIn("user-scalable=no", page)
+        self.assertIn("@media (max-width:380px)", styles)
         self.assertIn("stepsState.saved=steps", script)
         save_steps = script.split("async function saveSteps(){", 1)[1].split(
             "/* ---------- RECENTS", 1
@@ -240,15 +245,22 @@ class TestAPI(unittest.TestCase):
         r = self.client.post("/api/goal", json={
             "height_cm": 180, "age": 25, "sex": "male",
             "activity": "moderate", "objective": "cut_steady",
-            "weight_kg": 80})
+            "weight_kg": 80, "step_target": 7500})
         self.assertEqual(r.status_code, 200)
         g = self.client.get("/api/goal").get_json()
         self.assertEqual(g["goal"]["height_cm"], 180)
+        self.assertEqual(g["goal"]["step_target"], 7500)
         self.assertGreater(g["targets"]["calories"], 1200)
+        self.assertEqual(self.client.get("/api/today").get_json()["step_target"], 7500)
         # bad inputs
         r = self.client.post("/api/goal", json={"height_cm": "x"})
         self.assertEqual(r.status_code, 400)
         r = self.client.post("/api/preview_targets", json={})
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post("/api/goal", json={
+            "height_cm": 180, "age": 25, "sex": "male",
+            "activity": "moderate", "objective": "cut_steady",
+            "weight_kg": 80, "step_target": 0})
         self.assertEqual(r.status_code, 400)
 
     def test_goal_recalc_on_weight_change(self):
@@ -274,7 +286,7 @@ class TestAPI(unittest.TestCase):
         self.client.post("/api/goal", json={
             "height_cm": 180, "age": 24, "sex": "male",
             "activity": "moderate", "objective": "lean_bulk",
-            "weight_kg": 76.5})
+            "weight_kg": 76.5, "step_target": 7000})
         today = self.client.get("/api/today").get_json()
         self.assertTrue(today["coach"]["active"])
         self.assertFalse(today["weigh_in_due"])
@@ -282,7 +294,7 @@ class TestAPI(unittest.TestCase):
         self.assertTrue(progress["coach"]["active"])
         self.assertEqual(progress["calorie_adjustment"], 0)
         self.assertTrue(progress["weekly_report"]["active"])
-        self.assertEqual(progress["weekly_report"]["step_target"], 5000)
+        self.assertEqual(progress["weekly_report"]["step_target"], 7000)
 
     # ── analytics / export ──
     def test_analytics_reflects_db(self):

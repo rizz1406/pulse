@@ -6,7 +6,8 @@
   --radius:24px; --glass-blur:22px;
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-html,body{background:var(--bg)}
+html{background:var(--bg);-webkit-text-size-adjust:100%;text-size-adjust:100%}
+html,body{width:100%;max-width:100%;background:var(--bg)}
 body{color:var(--ink);font-family:'Inter',sans-serif;
   min-height:100vh;padding-bottom:120px;overflow-x:hidden;position:relative}
 /* Aurora background — gives the glass something to refract */
@@ -21,7 +22,7 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
   animation:auroraDrift 14s ease-in-out infinite alternate}
 @keyframes auroraDrift{from{transform:translateY(-2%) scale(1)}to{transform:translateY(3%) scale(1.05)}}
 h1,h2,h3,.display{font-family:'Space Grotesk',sans-serif}
-.wrap{max-width:520px;margin:0 auto;padding:0 16px}
+.wrap{width:100%;max-width:720px;margin:0 auto;padding:0 20px}
 
 /* Frosted glass helper */
 .glass{background:var(--panel);backdrop-filter:blur(var(--glass-blur)) saturate(1.4);
@@ -152,7 +153,7 @@ header{padding:24px 0 8px;display:flex;align-items:center;justify-content:space-
 .dock{position:fixed;bottom:0;left:0;right:0;
   padding:20px 16px calc(18px + env(safe-area-inset-bottom));z-index:40;
   background:linear-gradient(180deg,transparent,rgba(10,13,11,0.88) 40%)}
-.dock-inner{max-width:520px;margin:0 auto;display:flex;gap:9px;align-items:flex-end}
+.dock-inner{width:100%;max-width:720px;margin:0 auto;display:flex;gap:9px;align-items:flex-end}
 .input-box{flex:1;border-radius:18px;display:flex;align-items:center;padding:5px 5px 5px 16px;
   background:var(--panel);backdrop-filter:blur(var(--glass-blur)) saturate(1.4);
   -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.4);
@@ -242,6 +243,7 @@ h2.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:va
 .overlay.show{display:flex;animation:fade .25s}
 .sheet{border-radius:28px 28px 0 0;width:100%;max-width:520px;
   padding:26px 22px calc(26px + env(safe-area-inset-bottom));animation:up .4s cubic-bezier(.2,.9,.2,1);
+  max-height:92vh;max-height:92dvh;overflow-y:auto;overscroll-behavior:contain;
   background:rgba(14,17,15,0.92);backdrop-filter:blur(30px) saturate(1.5);
   -webkit-backdrop-filter:blur(30px) saturate(1.5);
   border:1px solid var(--line-bright);border-bottom:none;
@@ -281,6 +283,7 @@ h2.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:va
 /* ---- Goal form ---- */
 .gf{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .gf-row{display:flex;flex-direction:column;gap:5px}
+.gf-row.full{grid-column:1/-1}
 .gf-row label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
 .gf-row input,.gf-row select{background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
   padding:12px;border-radius:11px;font-size:15px;font-family:'Inter';outline:none}
@@ -443,4 +446,50 @@ h2.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:va
 @media (hover:none),(pointer:coarse){
   body::after{animation:none}
   .glass,.sheet,.input-box{backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+}
+
+/* ---- Responsive layout: natural 100% browser zoom on phones and desktop ---- */
+@media (max-width:600px){
+  .wrap{padding:0 14px}
+  .dock{padding-left:14px;padding-right:14px}
+  input,select,textarea,.gf-row input,.gf-row select,.steps-entry input{font-size:16px}
+  .sheet{padding-left:18px;padding-right:18px}
+}
+
+@media (max-width:380px){
+  :root{--radius:20px}
+  .wrap{padding:0 10px}
+  header{padding-top:16px}
+  .brand{font-size:22px}
+  .streak-pill{padding:7px 9px;font-size:11px}
+  .hero{padding:16px}
+  .hero-top{gap:11px}
+  .ring-wrap{width:106px;height:106px}
+  .ring-wrap svg{width:106px;height:106px}
+  .ring-center .big{font-size:24px}
+  .hero-stats{gap:10px}
+  .macro-row{gap:6px}
+  .macro-row .name{width:43px;font-size:11px}
+  .macro-row .val{width:44px;font-size:11px}
+  .water-card,.steps-card{padding:14px}
+  .water-card,.steps-main{gap:10px}
+  .steps-ico{display:none}
+  .steps-summary{min-width:76px}
+  .steps-entry-row{gap:5px}
+  .steps-entry button{padding-left:10px;padding-right:10px}
+  .tabs{margin-top:14px}
+  .card{padding:16px}
+  .stat-grid{gap:6px}
+  .stat{padding:13px 6px}
+  .stat .num{font-size:20px}
+  .gf{grid-template-columns:1fr}
+  .gf-row.full{grid-column:auto}
+}
+
+@media (min-width:768px){
+  .wrap{padding:0 24px}
+  header{padding-top:32px}
+  .hero{padding:28px}
+  .overlay{align-items:center;padding:24px}
+  .sheet{max-width:620px;border-radius:24px;border-bottom:1px solid var(--line-bright)}
 }

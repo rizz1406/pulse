@@ -35,6 +35,7 @@ PROTEIN_PER_KG = {
 LEAN_BULK_MIN_GAIN = 0.15
 LEAN_BULK_MAX_GAIN = 0.25
 MAX_CALORIE_ADJUSTMENT = 500
+_UNSET = object()
 
 
 def _conn():
@@ -50,11 +51,13 @@ def init_goal_table():
                 activity TEXT, objective TEXT,
                 start_weight REAL, updated TEXT,
                 calorie_adjustment INTEGER DEFAULT 0,
-                last_adapted TEXT
+                last_adapted TEXT,
+                step_target INTEGER
             )""")
         for statement in (
             "ALTER TABLE goal ADD COLUMN calorie_adjustment INTEGER DEFAULT 0",
             "ALTER TABLE goal ADD COLUMN last_adapted TEXT",
+            "ALTER TABLE goal ADD COLUMN step_target INTEGER",
         ):
             try:
                 c.execute(statement)
@@ -105,18 +108,23 @@ def bmi(weight_kg, height_cm):
     return round(w / ((h / 100.0) ** 2), 1)
 
 
-def save_goal(height_cm, age, sex, activity, objective, current_weight):
+def save_goal(height_cm, age, sex, activity, objective, current_weight,
+              step_target=None):
+    if step_target is None:
+        step_target = get_step_target()
     with _conn() as c:
         c.execute(
             "INSERT INTO goal (id, height_cm, age, sex, activity, objective, "
-            "start_weight, updated, calorie_adjustment, last_adapted) "
-            "VALUES (1,?,?,?,?,?,?,?,0,NULL) "
+            "start_weight, updated, calorie_adjustment, last_adapted, step_target) "
+            "VALUES (1,?,?,?,?,?,?,?,0,NULL,?) "
             "ON CONFLICT(id) DO UPDATE SET height_cm=excluded.height_cm, "
             "age=excluded.age, sex=excluded.sex, activity=excluded.activity, "
             "objective=excluded.objective, start_weight=excluded.start_weight, "
-            "updated=excluded.updated, calorie_adjustment=0, last_adapted=NULL",
+            "updated=excluded.updated, calorie_adjustment=0, last_adapted=NULL, "
+            "step_target=excluded.step_target",
             (height_cm, age, sex, activity, objective, current_weight,
-             datetime.now(config.LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")),
+             datetime.now(config.LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+             int(step_target)),
         )
     # also record the current weight so targets track from it
     if current_weight:
@@ -135,6 +143,13 @@ def get_goal(conn=None):
             return get_goal(c)
     r = conn.execute("SELECT * FROM goal WHERE id=1").fetchone()
     return dict(r) if r else None
+
+
+def get_step_target(conn=None, goal=_UNSET):
+    """Saved daily step goal, falling back to the environment default."""
+    g = get_goal(conn) if goal is _UNSET else goal
+    value = g.get("step_target") if g else None
+    return int(value or config.DAILY_STEP_TARGET)
 
 
 def current_targets(conn=None, goal=None):

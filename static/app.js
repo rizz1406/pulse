@@ -977,6 +977,9 @@ async function openGoal(){
     gv('gWeight',(d.targets&&d.targets.weight)||d.goal.start_weight);
     gv('gHeight',d.goal.height_cm); gv('gAge',d.goal.age);
     gv('gSex',d.goal.sex); gv('gActivity',d.goal.activity); gv('gObjective',d.goal.objective);
+    gv('gSteps',d.goal.step_target||5000);
+  }else{
+    gv('gSteps',5000);
   }
   previewTargets();
   document.getElementById('goalOverlay').classList.add('show');
@@ -1007,8 +1010,10 @@ async function previewTargets(){
 }
 async function saveGoal(){
   const body={weight_kg:val('gWeight'),height_cm:val('gHeight'),age:val('gAge'),
-    sex:val('gSex'),activity:val('gActivity'),objective:val('gObjective')};
+    sex:val('gSex'),activity:val('gActivity'),objective:val('gObjective'),
+    step_target:val('gSteps')};
   if(!body.weight_kg||!body.height_cm||!body.age){toast('Fill weight, height & age');return;}
+  if(!body.step_target||body.step_target<1||body.step_target>100000){toast('Enter a step goal from 1 to 100,000');return;}
   const r=await fetch('/api/goal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d=await r.json();
   if(d.ok){ closeGoal(); toast('Goal saved 🎯'); refreshToday(); }

@@ -35,7 +35,7 @@ app.secret_key = config.SECRET_KEY
 # tables lazily on the first request, which runs inside the worker.
 _db_ready = False
 _db_init_lock = threading.Lock()
-_SCHEMA_MARKER = "app_schema_v2"
+_SCHEMA_MARKER = "app_schema_v3"
 
 
 def _schema_is_current():
@@ -353,8 +353,10 @@ def progress():
         data["calorie_adjustment"] = t.get("calorie_adjustment", 0)
     coach = goals.weight_coach()
     data["coach"] = coach
-    data["weekly_report"] = storage.lean_bulk_report(t, coach)
     g = goals.get_goal()
+    data["weekly_report"] = storage.lean_bulk_report(
+        t, coach, step_target=goals.get_step_target(goal=g)
+    )
     data["bmi"] = goals.bmi(data.get("current"), g.get("height_cm") if g else None)
     return jsonify(data)
 
@@ -386,6 +388,13 @@ def set_goal():
         age = int(d["age"])
         if not (0 < weight < 500 and 0 < height < 300 and 0 < age < 120):
             return jsonify({"error": "bad input: out of range"}), 400
+        current_goal = goals.get_goal()
+        step_target = int(d.get(
+            "step_target",
+            goals.get_step_target(goal=current_goal),
+        ))
+        if not 1 <= step_target <= 100000:
+            return jsonify({"error": "step target out of range"}), 400
         goals.save_goal(
             height_cm=height,
             age=age,
@@ -393,6 +402,7 @@ def set_goal():
             activity=d.get("activity", "moderate"),
             objective=d.get("objective", "cut_steady"),
             current_weight=weight,
+            step_target=step_target,
         )
     except (KeyError, ValueError, TypeError) as e:
         return jsonify({"error": f"bad input: {e}"}), 400
@@ -431,6 +441,7 @@ def today():
         data["fat_target"] = t["fat"]
         data["goal_weight"] = t["weight"]
         data["calorie_adjustment"] = t.get("calorie_adjustment", 0)
+    data["step_target"] = goals.get_step_target(goal=goal)
     data["coach"] = coach
     return jsonify(data)
 
@@ -464,7 +475,7 @@ def steps():
     return jsonify({
         "ok": True,
         "steps": storage.save_steps(total),
-        "target": config.DAILY_STEP_TARGET,
+        "target": goals.get_step_target(),
     })
 
 
