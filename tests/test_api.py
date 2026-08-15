@@ -209,12 +209,16 @@ class TestAPI(unittest.TestCase):
         page = self.client.get("/").get_data(as_text=True)
         script = self.client.get("/app.js").get_data(as_text=True)
         styles = self.client.get("/style.css").get_data(as_text=True)
+        worker = self.client.get("/sw.js").get_data(as_text=True)
         self.assertIn('id="stepsEditButton"', page)
         self.assertIn('id="stepsEditor"', page)
         self.assertIn('id="gSteps"', page)
         self.assertIn("viewport-fit=cover", page)
         self.assertNotIn("user-scalable=no", page)
         self.assertIn("@media (max-width:380px)", styles)
+        self.assertIn("repeat(2,minmax(0,1fr))", styles)
+        self.assertIn("max-width:min(520px,100vw)", styles)
+        self.assertIn("pulse-v15", worker)
         self.assertIn("stepsState.saved=steps", script)
         save_steps = script.split("async function saveSteps(){", 1)[1].split(
             "/* ---------- RECENTS", 1
