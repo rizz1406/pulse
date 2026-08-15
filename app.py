@@ -8,6 +8,7 @@ import base64
 import functools
 import json
 import re
+import threading
 import urllib.request
 
 from flask import (
@@ -32,16 +33,21 @@ app.secret_key = config.SECRET_KEY
 # native threads don't survive the fork, causing deadlocks. Instead we init the
 # tables lazily on the first request, which runs inside the worker.
 _db_ready = False
+_db_init_lock = threading.Lock()
 
 
 @app.before_request
 def _ensure_db():
     global _db_ready
+    if request.endpoint in {"index", "static", "me", "login", "logout"}:
+        return
     if not _db_ready:
-        storage.init_db()
-        goals.init_goal_table()
-        portions.init_portion_table()
-        _db_ready = True
+        with _db_init_lock:
+            if not _db_ready:
+                storage.init_db()
+                goals.init_goal_table()
+                portions.init_portion_table()
+                _db_ready = True
 
 
 # ─────────────────────────────────────────────────────────────

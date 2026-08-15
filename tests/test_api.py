@@ -63,6 +63,25 @@ class TestAPI(unittest.TestCase):
         r = self.client.get("/api/me").get_json()
         self.assertFalse(r["authed"])
 
+    def test_db_init_skips_shell_requests_and_runs_once_for_data(self):
+        import goals
+        import portions
+        app_mod._db_ready = False
+        try:
+            with mock.patch.object(storage, "init_db") as init_storage, \
+                    mock.patch.object(goals, "init_goal_table") as init_goals, \
+                    mock.patch.object(portions, "init_portion_table") as init_portions:
+                self.client.get("/")
+                self.client.get("/api/me")
+                init_storage.assert_not_called()
+                self.client.get("/api/today")
+                self.client.get("/api/today")
+                init_storage.assert_called_once_with()
+                init_goals.assert_called_once_with()
+                init_portions.assert_called_once_with()
+        finally:
+            app_mod._db_ready = True
+
     # ── /api/log ──
     def test_log_text_food(self):
         r = self.client.post("/api/log", json={"text": "2 boiled eggs"})

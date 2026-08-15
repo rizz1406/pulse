@@ -14,12 +14,26 @@ async function doLogin(){
   if(d.ok){ showApp(); } else { document.getElementById('loginErr').textContent='Wrong passcode'; }
 }
 document.getElementById('passInput').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
-function showApp(){
+let _startupExtrasLoaded=false;
+async function showApp(){
   document.getElementById('login').style.display='none';
   document.getElementById('appWrap').style.display='block';
   document.getElementById('dock').style.display='block';
-  refreshToday();
-  loadSuggestions(); // once at startup; use the Refresh button to re-ask later
+  try{
+    const cached=JSON.parse(localStorage.getItem('pulse-cache:/api/today'));
+    if(cached&&cached.totals) renderToday(cached);
+  }catch(e){}
+  await refreshToday();
+  if(!_startupExtrasLoaded){
+    _startupExtrasLoaded=true;
+    const loadExtras=()=>{
+      loadWeeklyStreak();
+      loadRecap();
+      setTimeout(()=>loadSuggestions(),300);
+    };
+    if('requestIdleCallback' in window) requestIdleCallback(loadExtras,{timeout:1200});
+    else setTimeout(loadExtras,200);
+  }
 }
 function showLogin(){
   document.getElementById('appWrap').style.display='none';
@@ -475,8 +489,7 @@ let currentDays=30;
 async function refreshToday(){
   const d=await getJSON('/api/today');
   if(d){ renderToday(d); maybePromptDailyWeight(d); }
-  loadWeeklyStreak(); // fire-and-forget, doesn't block the UI
-  loadRecap();        // AI weekly summary (fire-and-forget)
+  loadRecents();
 }
 
 function localDay(){
@@ -526,12 +539,24 @@ function toggleWeightReminder(){
   loadProgress();
 }
 
-async function loadSuggestions(){
+async function loadSuggestions(force=false){
   const card=document.getElementById('suggestCard');
   const list=document.getElementById('suggestList');
+  const cacheKey='pulse-suggestions-daily';
+  let d=null;
+  if(!force){
+    try{
+      const cached=JSON.parse(localStorage.getItem(cacheKey));
+      if(cached&&cached.day===localDay()) d=cached.data;
+    }catch(e){}
+  }
   try{
-    const r=await fetch('/api/suggest');
-    const d=await r.json();
+    if(!d){
+      const r=await fetch('/api/suggest');
+      if(!r.ok) throw new Error('suggestions failed');
+      d=await r.json();
+      localStorage.setItem(cacheKey,JSON.stringify({day:localDay(),data:d}));
+    }
     if(!d.suggestions||!d.suggestions.length){card.style.display='none';return;}
     list.innerHTML=d.suggestions.map(s=>`
       <div class="suggest-item">
@@ -613,7 +638,6 @@ function renderToday(d){
       <div class="del" onclick='event.stopPropagation();del("water",${w.id})'>✕</div></div>`;
   });
   list.innerHTML=html||'<div class="empty">Nothing logged yet.<br>Tell me what you ate or lifted below 👇</div>';
-  loadRecents();
 }
 
 /* ---------- WEEKLY STREAK ---------- */
@@ -629,14 +653,26 @@ async function loadWeeklyStreak(){
 }
 
 /* ---------- WEEKLY AI RECAP ---------- */
-async function loadRecap(){
+async function loadRecap(force=false){
   const card=document.getElementById('recapCard');
   const body=document.getElementById('recapBody');
   if(card.dataset.loading){return;}
+  const cacheKey='pulse-recap-daily';
+  if(!force){
+    try{
+      const cached=JSON.parse(localStorage.getItem(cacheKey));
+      if(cached&&cached.day===localDay()){
+        if(cached.data.recap){body.textContent=cached.data.recap;card.style.display='block';}
+        else card.style.display='none';
+        return;
+      }
+    }catch(e){}
+  }
   card.dataset.loading='1';
   body.innerHTML='<span class="spinner" style="width:18px;height:18px"></span>';
   try{
-    const d=await getJSON('/api/recap');
+    const d=await getJSON('/api/recap'+(force?'?refresh=1':''));
+    if(d) localStorage.setItem(cacheKey,JSON.stringify({day:localDay(),data:d}));
     if(d && d.recap){
       body.textContent=d.recap;
       card.style.display='block';
